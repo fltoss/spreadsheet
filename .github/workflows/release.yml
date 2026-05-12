@@ -44,7 +44,7 @@ jobs:
 
     - name: Build the project
       id: build-crate
-      uses: philss/rustler-precompiled-action@v1.1.4
+      uses: philss/rustler-precompiled-action@v1.1.5
       with:
         project-name: spreadsheet
         project-version: ${{ env.PROJECT_VERSION }}
@@ -54,7 +54,7 @@ jobs:
         project-dir: "native/spreadsheet"
 
     - name: Artifact upload
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ steps.build-crate.outputs.file-name }}
         path: ${{ steps.build-crate.outputs.file-path }}
