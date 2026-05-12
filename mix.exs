@@ -2,7 +2,7 @@ defmodule Spreadsheet.MixProject do
   use Mix.Project
 
   @github_url "https://github.com/fltoss/spreadsheet"
-  @version "0.4.9"
+  @version "0.4.10"
 
   def project do
     [
@@ -24,7 +24,7 @@ defmodule Spreadsheet.MixProject do
 
   defp deps do
     [
-      {:rustler_precompiled, "~> 0.9.0"},
+      {:rustler_precompiled, "~> 0.8"},
       {:rustler, "~> 0.37.1", runtime: false, optional: true},
       {:decimal, "~> 2.0 or ~> 3.0"},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
