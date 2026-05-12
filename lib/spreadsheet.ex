@@ -131,51 +131,49 @@ defmodule Spreadsheet do
           {:ok, list() | list({String.t(), list()})} | {:error, binary()}
   def parse(path_or_content, opts \\ [])
       when is_binary(path_or_content) and is_list(opts) do
-    sheet_name = Keyword.get(opts, :sheet)
     format = Keyword.get(opts, :format, :filename)
 
-    if sheet_name do
-      # Parse specific sheet
-      result =
-        case format do
-          :filename ->
-            Calamine.parse_from_path(path_or_content, sheet_name)
+    case Keyword.get(opts, :sheet) do
+      nil ->
+        parse_all_sheets(path_or_content, format, Keyword.get(opts, :hidden, true))
 
-          :binary ->
-            Calamine.parse_from_binary(path_or_content, sheet_name)
-
-          other ->
-            {:error,
-             "Invalid format option: #{inspect(other)}. Expected :filename or :binary"}
-        end
-
-      case result do
-        {:ok, rows} -> {:ok, parse_rows(rows)}
-        other -> other
-      end
-    else
-      # Parse all sheets
-      include_hidden = Keyword.get(opts, :hidden, true)
-
-      with {:ok, sheet_names} <-
-             sheet_names(path_or_content,
-               format: format,
-               hidden: include_hidden
-             ) do
-        results =
-          Enum.reduce_while(sheet_names, [], fn name, acc ->
-            case parse(path_or_content, sheet: name, format: format) do
-              {:ok, data} -> {:cont, [{name, data} | acc]}
-              {:error, _} = error -> {:halt, error}
-            end
-          end)
-
-        case results do
-          {:error, _} = error -> error
-          sheets -> {:ok, Enum.reverse(sheets)}
-        end
-      end
+      sheet_name ->
+        parse_single_sheet(path_or_content, sheet_name, format)
     end
+  end
+
+  defp parse_single_sheet(path_or_content, sheet_name, format) do
+    with {:ok, rows} <- call_parser(path_or_content, sheet_name, format) do
+      {:ok, parse_rows(rows)}
+    end
+  end
+
+  defp call_parser(path, sheet_name, :filename),
+    do: Calamine.parse_from_path(path, sheet_name)
+
+  defp call_parser(content, sheet_name, :binary),
+    do: Calamine.parse_from_binary(content, sheet_name)
+
+  defp call_parser(_, _, other),
+    do:
+      {:error,
+       "Invalid format option: #{inspect(other)}. Expected :filename or :binary"}
+
+  defp parse_all_sheets(path_or_content, format, include_hidden) do
+    with {:ok, names} <-
+           sheet_names(path_or_content, format: format, hidden: include_hidden),
+         {:ok, sheets} <- collect_sheets(path_or_content, names, format) do
+      {:ok, Enum.reverse(sheets)}
+    end
+  end
+
+  defp collect_sheets(path_or_content, names, format) do
+    Enum.reduce_while(names, {:ok, []}, fn name, {:ok, acc} ->
+      case parse(path_or_content, sheet: name, format: format) do
+        {:ok, data} -> {:cont, {:ok, [{name, data} | acc]}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
   end
 
   @doc """

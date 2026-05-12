@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.9] - 2026-05-12
+
+### Added
+- Allow `decimal` package version 2.0 or 3.0 (`~> 2.0 or ~> 3.0`)
+
+### Updated
+- Updated `rustler_precompiled` 0.8.1 → 0.9.0
+- Updated Rust dependencies:
+  - [calamine](https://github.com/tafia/calamine/blob/master/CHANGELOG.md) 0.34.0 → 0.35.0
+    - Added `has_1904_epoch()` method on XLS/XLSX/XLSB structs to detect Excel date epoch
+    - Made `RowDeserializer` public for custom `DeserializeSeed` implementations
+    - Performance: optimised `<v>` cell value parsing and cell reference parsing
+    - Bug fixes: redundant `<v>` in XLSX inlineStr cells, XML namespace prefixes in relation ids, rich text `<r>` after plain `<t>`, XLS date formats for formula values, XLSX shared formula expansion corrupting function names (e.g. `LOG10`), inlineStr CDATA handling, BIFF5 formula parse panic, panic on unsupported XLS formula functions
+  - [rustler](https://github.com/rusterlium/rustler/blob/master/CHANGELOG.md) 0.37.3 → 0.37.4
+    - Fixed OTP 22/23 heap overflow by gating `ErlNifResourceTypeInit` members/dyncall on `nif_version_2_16`
+
 ## [0.4.7] - 2026-03-18
 
 ### Updated
