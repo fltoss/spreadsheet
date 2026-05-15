@@ -87,6 +87,10 @@ defmodule Spreadsheet do
     * `:sheet` - The name of the sheet to parse. If not provided, parses all sheets.
     * `:format` - Specifies the input format. Either `:filename` (default) or `:binary`.
     * `:hidden` - When `false`, excludes hidden sheets from all-sheets parsing. Defaults to `true`.
+      Ignored when `:sheet` is provided — naming a sheet explicitly always parses it.
+
+  Excel formula errors (`#REF!`, `#DIV/0!`, etc.) are returned as `{:error, reason}`
+  tuples so they remain distinguishable from text cells.
 
   ## Examples
 
@@ -144,7 +148,7 @@ defmodule Spreadsheet do
 
   defp parse_single_sheet(path_or_content, sheet_name, format) do
     with {:ok, rows} <- call_parser(path_or_content, sheet_name, format) do
-      {:ok, parse_rows(rows)}
+      {:ok, Spreadsheet.Parser.parse_rows(rows)}
     end
   end
 
@@ -159,22 +163,24 @@ defmodule Spreadsheet do
       {:error,
        "Invalid format option: #{inspect(other)}. Expected :filename or :binary"}
 
-  defp parse_all_sheets(path_or_content, format, include_hidden) do
-    with {:ok, names} <-
-           sheet_names(path_or_content, format: format, hidden: include_hidden),
-         {:ok, sheets} <- collect_sheets(path_or_content, names, format) do
-      {:ok, Enum.reverse(sheets)}
+  defp parse_all_sheets(path_or_content, :filename, include_hidden) do
+    with {:ok, sheets} <-
+           Calamine.parse_all_from_path(path_or_content, include_hidden) do
+      {:ok, Enum.map(sheets, fn {name, rows} -> {name, Spreadsheet.Parser.parse_rows(rows)} end)}
     end
   end
 
-  defp collect_sheets(path_or_content, names, format) do
-    Enum.reduce_while(names, {:ok, []}, fn name, {:ok, acc} ->
-      case parse(path_or_content, sheet: name, format: format) do
-        {:ok, data} -> {:cont, {:ok, [{name, data} | acc]}}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
+  defp parse_all_sheets(path_or_content, :binary, include_hidden) do
+    with {:ok, sheets} <-
+           Calamine.parse_all_from_binary(path_or_content, include_hidden) do
+      {:ok, Enum.map(sheets, fn {name, rows} -> {name, Spreadsheet.Parser.parse_rows(rows)} end)}
+    end
   end
+
+  defp parse_all_sheets(_, other, _),
+    do:
+      {:error,
+       "Invalid format option: #{inspect(other)}. Expected :filename or :binary"}
 
   @doc """
   Returns a list of sheet names from spreadsheet binary content.
@@ -212,20 +218,4 @@ defmodule Spreadsheet do
     parse(content, sheet: sheet_name, format: :binary)
   end
 
-  defp parse_rows(rows) do
-    for row <- rows do
-      for col <- row, do: parse_col(col)
-    end
-  end
-
-  defp parse_col(:empty), do: nil
-
-  defp parse_col({:date_time, val}) do
-    case NaiveDateTime.from_iso8601(val) do
-      {:ok, dt} -> dt
-      _ -> val
-    end
-  end
-
-  defp parse_col({_, val}), do: val
 end

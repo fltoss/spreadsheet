@@ -43,4 +43,10 @@ defmodule Spreadsheet.Calamine do
 
   def parse_from_path(_path, _sheet_name),
     do: :erlang.nif_error(:nif_not_loaded)
+
+  def parse_all_from_path(_path, _hidden),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def parse_all_from_binary(_content, _hidden),
+    do: :erlang.nif_error(:nif_not_loaded)
 end

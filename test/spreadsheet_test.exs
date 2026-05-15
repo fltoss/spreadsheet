@@ -124,6 +124,37 @@ defmodule SpreadsheetTest do
     end
   end
 
+  describe "Calamine.parse_all_from_path/2 (bulk NIF — bug #4)" do
+    # Bug #4: parse_all_sheets currently re-opens the workbook for each sheet.
+    # A bulk NIF lets us open once and return all sheets.
+    test "returns [{sheet_name, rows}] in workbook order, honouring hidden" do
+      path = Path.join(@base_path, "test_file_1_hidden.xlsx")
+
+      assert {:ok, all_sheets} =
+               Spreadsheet.Calamine.parse_all_from_path(path, true)
+
+      assert [{"Sheet2", _}, {"Sheet1", _}] = all_sheets
+
+      assert {:ok, [{"Sheet1", _}]} =
+               Spreadsheet.Calamine.parse_all_from_path(path, false)
+    end
+
+    test "binary variant returns the same shape" do
+      content = File.read!(Path.join(@base_path, "test_file_1.xlsx"))
+
+      assert {:ok, [{"Sheet1", [header | _]}]} =
+               Spreadsheet.Calamine.parse_all_from_binary(content, true)
+
+      # Raw NIF output uses Rustler's tagged form; parse_rows would unwrap it.
+      assert header == [
+               string: "Dates",
+               string: "Numbers",
+               string: "Percentages",
+               string: "Strings"
+             ]
+    end
+  end
+
   describe "parse/2 (specific sheet)" do
     test "parses from binary content" do
       content = File.read!(Path.join(@base_path, "test_file_1.xlsx"))

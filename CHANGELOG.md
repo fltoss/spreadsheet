@@ -5,7 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-05-15
+
+### Added
+- `Spreadsheet.Calamine.parse_all_from_path/2` and `parse_all_from_binary/2` —
+  open the workbook once and return every sheet, replacing the previous
+  open-per-sheet loop in `Spreadsheet.parse/2`.
+
+### Changed
+- **Breaking:** Excel formula errors (`#REF!`, `#DIV/0!`, `#N/A`, …) are now
+  returned as `{:error, reason}` tuples instead of bare strings, so they are
+  distinguishable from text cells.
+- All NIFs are now scheduled on `DirtyCpu` to avoid stalling the BEAM scheduler
+  when parsing large workbooks.
+
+### Fixed
+- Datetimes that calamine cannot convert no longer leak the literal string
+  `"Invalid DateTime"` into the result — they become `nil`.
+- Sub-second precision in `Data::DateTime` cells is preserved (was previously
+  truncated to whole seconds by the format string).
+- Hidden-sheet filtering now uses sheet metadata in both branches, removing a
+  latent inconsistency between `hidden: true` and `hidden: false`.
 
 ### Updated
 - Updated Elixir dependencies: `erlex` 0.2.8 → 0.2.9, `ex_ast` 0.11.2 → 0.12.0
