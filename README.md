@@ -116,7 +116,7 @@ Add `spreadsheet` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:spreadsheet, "~> 0.4.0"}
+    {:spreadsheet, "~> 0.6.0"}
   ]
 end
 ```
