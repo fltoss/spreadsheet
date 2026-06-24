@@ -2,6 +2,11 @@ use calamine::{open_workbook_auto, open_workbook_auto_from_rs, Data, Reader, She
 use rustler::{Binary, NifTaggedEnum};
 use std::io::Cursor;
 
+/// A parsed sheet: rows of cells.
+type Sheet = Vec<Vec<ColumnData>>;
+/// A sheet paired with its name, as returned by the bulk parsers.
+type NamedSheets = Vec<(String, Sheet)>;
+
 fn filter_sheet_names_by_visibility(
     sheets_metadata: &[calamine::Sheet],
     show_hidden: bool,
@@ -38,7 +43,7 @@ fn sheet_names_from_path(path: &str, show_hidden: bool) -> Result<Vec<String>, S
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-fn parse_from_path(path: &str, sheet_name: &str) -> Result<Vec<Vec<ColumnData>>, String> {
+fn parse_from_path(path: &str, sheet_name: &str) -> Result<Sheet, String> {
     open_workbook_auto(path)
         .map_err(|e| e.to_string())
         .and_then(|mut workbook| {
@@ -50,7 +55,7 @@ fn parse_from_path(path: &str, sheet_name: &str) -> Result<Vec<Vec<ColumnData>>,
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-fn parse_from_binary(content: Binary, sheet_name: &str) -> Result<Vec<Vec<ColumnData>>, String> {
+fn parse_from_binary(content: Binary, sheet_name: &str) -> Result<Sheet, String> {
     open_workbook_auto_from_rs(Cursor::new(content.as_slice()))
         .map_err(|e| e.to_string())
         .and_then(|mut workbook| {
@@ -62,10 +67,7 @@ fn parse_from_binary(content: Binary, sheet_name: &str) -> Result<Vec<Vec<Column
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-fn parse_all_from_path(
-    path: &str,
-    show_hidden: bool,
-) -> Result<Vec<(String, Vec<Vec<ColumnData>>)>, String> {
+fn parse_all_from_path(path: &str, show_hidden: bool) -> Result<NamedSheets, String> {
     let mut workbook = open_workbook_auto(path).map_err(|e| e.to_string())?;
     let names = filter_sheet_names_by_visibility(workbook.sheets_metadata(), show_hidden);
     names
@@ -80,10 +82,7 @@ fn parse_all_from_path(
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-fn parse_all_from_binary(
-    content: Binary,
-    show_hidden: bool,
-) -> Result<Vec<(String, Vec<Vec<ColumnData>>)>, String> {
+fn parse_all_from_binary(content: Binary, show_hidden: bool) -> Result<NamedSheets, String> {
     let mut workbook =
         open_workbook_auto_from_rs(Cursor::new(content.as_slice())).map_err(|e| e.to_string())?;
     let names = filter_sheet_names_by_visibility(workbook.sheets_metadata(), show_hidden);
@@ -111,7 +110,7 @@ enum ColumnData {
     Empty,
 }
 
-fn extract_rows(range: calamine::Range<Data>) -> Vec<Vec<ColumnData>> {
+fn extract_rows(range: calamine::Range<Data>) -> Sheet {
     range
         .rows()
         .map(|row| row.iter().map(extract_column).collect())
