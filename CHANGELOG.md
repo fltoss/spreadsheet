@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Updated
+- Updated Elixir dependencies:
+  - [rustler](https://github.com/rusterlium/rustler/blob/master/CHANGELOG.md) 0.37.3 → 0.38.0
+    - Added `Term::size` support on Erlang 29 (`nif_version_2_18`), direct UTF-8
+      atom support (`nif_version_2_17`), `NewBinary::from_iter`, and
+      `deserialize_seq` for binary deserialization
+    - Deprecated the previous atom-creation signatures (alongside the new UTF-8
+      variants) and removed some deprecated codegen features. No code changes
+      were required — this library uses only `rustler::nif`, `NifTaggedEnum`, and
+      `rustler::init!`, none of which are affected. Not breaking for callers.
+  - `credo` 1.7.18 → 1.7.19 (dev/test)
+  - `decimal` 3.1.0 → 3.1.1
+  - `ex_doc` 0.40.2 → 0.40.3 (dev)
+  - `igniter` 0.8.0 → 0.8.2 (dev/test)
+- Updated Rust dependencies:
+  - [rustler](https://github.com/rusterlium/rustler/blob/master/CHANGELOG.md) 0.37.4 → 0.38.0 (kept in sync with the Elixir package)
+  - [chrono](https://github.com/chronotope/chrono/blob/main/CHANGELOG.md) 0.4.44 → 0.4.45
+  - Updated transitive Rust dependencies (`cc`, `js-sys`, `log`, `memchr`,
+    `quote`, `shlex`, `syn`, `wasm-bindgen`, `zlib-rs`, …)
+
 ## [0.5.0] - 2026-05-15
 
 ### Added
