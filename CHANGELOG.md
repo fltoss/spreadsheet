@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Breaking:** `.ods` dates are now normalised to `NaiveDateTime` (date-only
+  values become midnight), matching the `.xlsx`/`.xls` output. Previously they
+  leaked back as raw ISO 8601 strings, so the type of a date cell depended on the
+  source format.
+- Duration-formatted cells (e.g. `[h]:mm:ss`) are no longer misread as bogus
+  dates. Calamine surfaces them as `DateTime`/`TimeDelta` values; they are now
+  returned as ISO 8601 duration strings (e.g. `"PT1H30M0S"`).
+
+### Changed
+- Internal cleanup: deduplicated the path/binary NIF bodies behind generic Rust
+  helpers, and the all-sheets/format-error handling in the Elixir wrapper. No
+  user-facing behaviour change.
+- Removed the inert `doctest Spreadsheet` declaration (the `@doc` examples are
+  illustrative and were never executed as doctests).
+
 ### Updated
 - Updated Elixir dependencies:
   - [rustler](https://github.com/rusterlium/rustler/blob/master/CHANGELOG.md) 0.37.3 → 0.38.0

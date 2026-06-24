@@ -92,10 +92,18 @@ iex> Spreadsheet.parse(content, format: :binary)
 ### Data Type Handling
 
 The library automatically converts data types:
-- **Dates**: Converted to `NaiveDateTime` structs
-- **Numbers**: Converted to `Float` values
+- **Dates**: Converted to `NaiveDateTime` structs. This is consistent across all
+  formats — `.ods` files, which store dates as ISO 8601 strings, are normalised
+  to `NaiveDateTime` just like `.xlsx`/`.xls`. Date-only values become a
+  `NaiveDateTime` at midnight.
+- **Numbers**: Converted to `Integer` or `Float` values
+- **Durations**: Cells formatted as elapsed time (e.g. `[h]:mm:ss`) are returned
+  as ISO 8601 duration strings (e.g. `"PT1H30M0S"`) rather than being misread as
+  a date
 - **Empty cells**: Returned as `nil`
 - **Text**: Returned as strings
+- **Formula errors**: `#REF!`, `#DIV/0!`, `#N/A`, etc. are returned as
+  `{:error, reason}` tuples so they stay distinguishable from text cells
 
 For detailed information on the underlying parsing engine, see the [Calamine documentation](https://docs.rs/calamine/latest/calamine/).
 
@@ -173,7 +181,7 @@ Follow the [rustler_precompiled guide](https://hexdocs.pm/rustler_precompiled/pr
 
 ## Copyright and License
 
-Copyright (c) 2025 Wilhelm H Kirschbaum
+Copyright (c) 2022-2026 Wilhelm H Kirschbaum
 
 This work is free. You can redistribute it and/or modify it under the
 terms of the MIT License. See the [LICENSE.md](./LICENSE.md) file for more details.

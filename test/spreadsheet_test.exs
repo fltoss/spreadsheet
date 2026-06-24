@@ -1,6 +1,5 @@
 defmodule SpreadsheetTest do
   use ExUnit.Case
-  doctest Spreadsheet
 
   @base_path Path.join(__DIR__, "/files")
 
@@ -241,18 +240,21 @@ defmodule SpreadsheetTest do
     test "parses ods files from binary content" do
       content = File.read!(Path.join(@base_path, "test_file_1.ods"))
 
+      # ODS dates arrive as ISO strings but are normalised to NaiveDateTime, so
+      # the result matches the xlsx/xls output for the same workbook. The
+      # "2024-01-01" cell stays a string because it is a text cell, not a date.
       assert Spreadsheet.parse(content, sheet: "Sheet1", format: :binary) ==
                {
                  :ok,
                  [
                    ["Dates", "Numbers", "Percentages", "Strings"],
-                   ["2024-12-12", 1234.0, 0.12, "Foobar"],
-                   ["1993-11-21", "00012345", 0.1212, nil],
-                   ["1987-05-08", 1122.0, "12", nil],
-                   ["1994-05-22", "12,12", 12.0, nil],
+                   [~N[2024-12-12 00:00:00], 1234.0, 0.12, "Foobar"],
+                   [~N[1993-11-21 00:00:00], "00012345", 0.1212, nil],
+                   [~N[1987-05-08 00:00:00], 1122.0, "12", nil],
+                   [~N[1994-05-22 00:00:00], "12,12", 12.0, nil],
                    ["2024-01-01", 11.12, "33.12%", "123"],
-                   ["1987-05-08T20:10:12", nil, nil, nil],
-                   ["1987-05-08T20:10:12", nil, nil, nil]
+                   [~N[1987-05-08 20:10:12], nil, nil, nil],
+                   [~N[1987-05-08 20:10:12], nil, nil, nil]
                  ]
                }
     end
@@ -265,5 +267,4 @@ defmodule SpreadsheetTest do
                 "Invalid format option: :invalid. Expected :filename or :binary"}
     end
   end
-
 end

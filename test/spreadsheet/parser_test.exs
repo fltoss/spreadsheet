@@ -13,8 +13,31 @@ defmodule Spreadsheet.ParserTest do
       assert Parser.parse_col({:float, 1.5}) == 1.5
       assert Parser.parse_col({:string, "hi"}) == "hi"
       assert Parser.parse_col({:bool, true}) == true
-      assert Parser.parse_col({:date_time_iso, "2024-01-15"}) == "2024-01-15"
       assert Parser.parse_col({:duration_iso, "PT1H"}) == "PT1H"
+    end
+  end
+
+  describe "parse_col/1 — ISO datetime (format consistency)" do
+    # ODS dates arrive as :date_time_iso strings while xlsx/xls arrive as
+    # :date_time. Both should yield a NaiveDateTime so the public API returns
+    # one consistent type regardless of source format.
+    test "parses a full ISO datetime to NaiveDateTime" do
+      assert Parser.parse_col({:date_time_iso, "1987-05-08T20:10:12"}) ==
+               ~N[1987-05-08 20:10:12]
+    end
+
+    test "parses a date-only value to NaiveDateTime at midnight" do
+      assert Parser.parse_col({:date_time_iso, "2024-01-15"}) ==
+               ~N[2024-01-15 00:00:00]
+    end
+
+    test "preserves sub-second precision" do
+      assert Parser.parse_col({:date_time_iso, "1987-05-08T20:10:12.5"}) ==
+               ~N[1987-05-08 20:10:12.5]
+    end
+
+    test "falls back to the raw string when unparseable" do
+      assert Parser.parse_col({:date_time_iso, "not-a-date"}) == "not-a-date"
     end
   end
 

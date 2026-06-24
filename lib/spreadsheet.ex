@@ -62,8 +62,7 @@ defmodule Spreadsheet do
         Calamine.sheet_names_from_binary(path_or_content, include_hidden)
 
       other ->
-        {:error,
-         "Invalid format option: #{inspect(other)}. Expected :filename or :binary"}
+        invalid_format_error(other)
     end
   end
 
@@ -139,7 +138,11 @@ defmodule Spreadsheet do
 
     case Keyword.get(opts, :sheet) do
       nil ->
-        parse_all_sheets(path_or_content, format, Keyword.get(opts, :hidden, true))
+        parse_all_sheets(
+          path_or_content,
+          format,
+          Keyword.get(opts, :hidden, true)
+        )
 
       sheet_name ->
         parse_single_sheet(path_or_content, sheet_name, format)
@@ -158,26 +161,36 @@ defmodule Spreadsheet do
   defp call_parser(content, sheet_name, :binary),
     do: Calamine.parse_from_binary(content, sheet_name)
 
-  defp call_parser(_, _, other),
+  defp call_parser(_, _, other), do: invalid_format_error(other)
+
+  defp parse_all_sheets(path_or_content, :filename, include_hidden),
     do:
-      {:error,
-       "Invalid format option: #{inspect(other)}. Expected :filename or :binary"}
+      do_parse_all_sheets(
+        &Calamine.parse_all_from_path/2,
+        path_or_content,
+        include_hidden
+      )
 
-  defp parse_all_sheets(path_or_content, :filename, include_hidden) do
-    with {:ok, sheets} <-
-           Calamine.parse_all_from_path(path_or_content, include_hidden) do
-      {:ok, Enum.map(sheets, fn {name, rows} -> {name, Spreadsheet.Parser.parse_rows(rows)} end)}
+  defp parse_all_sheets(path_or_content, :binary, include_hidden),
+    do:
+      do_parse_all_sheets(
+        &Calamine.parse_all_from_binary/2,
+        path_or_content,
+        include_hidden
+      )
+
+  defp parse_all_sheets(_, other, _), do: invalid_format_error(other)
+
+  defp do_parse_all_sheets(parser, path_or_content, include_hidden) do
+    with {:ok, sheets} <- parser.(path_or_content, include_hidden) do
+      {:ok,
+       Enum.map(sheets, fn {name, rows} ->
+         {name, Spreadsheet.Parser.parse_rows(rows)}
+       end)}
     end
   end
 
-  defp parse_all_sheets(path_or_content, :binary, include_hidden) do
-    with {:ok, sheets} <-
-           Calamine.parse_all_from_binary(path_or_content, include_hidden) do
-      {:ok, Enum.map(sheets, fn {name, rows} -> {name, Spreadsheet.Parser.parse_rows(rows)} end)}
-    end
-  end
-
-  defp parse_all_sheets(_, other, _),
+  defp invalid_format_error(other),
     do:
       {:error,
        "Invalid format option: #{inspect(other)}. Expected :filename or :binary"}
@@ -217,5 +230,4 @@ defmodule Spreadsheet do
   def parse_from_binary(content, sheet_name) do
     parse(content, sheet: sheet_name, format: :binary)
   end
-
 end
