@@ -1,6 +1,6 @@
 [package]
 name = "spreadsheet"
-version = "0.6.0"
+version = "0.6.1"
 authors = []
 edition = "2021"
 
@@ -9,7 +9,7 @@ name = "spreadsheet"
 crate-type = ["cdylib"]
 
 [dependencies]
-calamine = { version = "0.35.0", features = ["chrono"]}
+calamine = { version = "0.36.0", features = ["chrono"]}
 rustler = {version = "0.38.0", features = ["serde"]}
 chrono = "0.4.44"
 serde = "1.0.228"

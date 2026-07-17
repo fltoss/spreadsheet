@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-07-17
+
+No breaking changes: the public API, supported Elixir requirement (`~> 1.18`)
+and all runtime Elixir dependencies are unchanged.
+
+### Changed
+- CI now tests every supported Elixir version (1.18, 1.19 and 1.20) against
+  every Erlang/OTP version each of them supports (26 through 29), using the
+  latest patch releases (1.18.4 / 1.19.5 / 1.20.2, OTP 26.2 / 27.3 / 28.5 /
+  29.0).
+
+### Updated
+- Updated Rust dependencies:
+  - [calamine](https://github.com/tafia/calamine/blob/master/Changelog.md) 0.35.0 → 0.36.0
+    - No API changes affecting this library (verified: only
+      `open_workbook_auto*`, `sheets_metadata` and `worksheet_range` are used).
+    - Bug fixes: shared-formula cell-name replacement for defined names, custom
+      number-format detection for the `*` (fill/repeat) operator, better XLS
+      error messages for truncated files.
+    - Behaviour note: XLSX text cells now trim leading/trailing ASCII
+      whitespace unless `xml:space="preserve"` is set, matching Excel and the
+      ECMA-376 spec. Files written by Excel, LibreOffice, openpyxl etc. set
+      this attribute when whitespace is intended, so their output is
+      unaffected; only spec-violating writers are normalised.
+  - Updated transitive Rust dependencies (`atoi_simd`, `cc`, `memchr`,
+    `quick-xml`, `syn`, `wasm-bindgen`, `zip`, `zlib-rs`, …)
+- Updated Elixir dev/test dependencies (transitive only, no runtime deps
+  changed): `ex_ast` 0.12.0 → 0.12.10, `hpax` 1.0.3 → 1.0.4, `makeup` 1.2.1 →
+  1.2.2, `mint` 1.9.0 → 1.9.3, `req` 0.6.2 → 0.6.3
+
 ## [0.6.0] - 2026-06-24
 
 ### Fixed

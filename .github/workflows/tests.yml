@@ -21,12 +21,20 @@ jobs:
       # For compatibility between Elixir & Erlang/OTP see
       # https://hexdocs.pm/elixir/compatibility-and-deprecations.html#compatibility-between-elixir-and-erlang-otp
       matrix:
-        otp: [26.2, 27.3, 28.1]
-        elixir: [1.18.3, 1.19.3]
+        otp: [26.2, 27.3, 28.5, 29.0]
+        elixir: [1.18.4, 1.19.5, 1.20.2]
         exclude:
-          # OTP 28.1 is only compatible with Elixir 1.19.1+
-          - otp: 28.1
-            elixir: 1.18.3
+          # Elixir 1.18 supports OTP 25-27
+          - otp: 28.5
+            elixir: 1.18.4
+          - otp: 29.0
+            elixir: 1.18.4
+          # Elixir 1.19 supports OTP 26-28
+          - otp: 29.0
+            elixir: 1.19.5
+          # Elixir 1.20 supports OTP 27-29
+          - otp: 26.2
+            elixir: 1.20.2
 
     steps:
       - uses: actions/checkout@v6
