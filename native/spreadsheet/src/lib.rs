@@ -1,12 +1,12 @@
+mod cell;
+mod encode;
 mod workbook;
 
-use calamine::{Data, Reader, SheetVisible, Sheets};
-use rustler::{Encoder, Env, NifTaggedEnum, Term};
+use calamine::{Data, Range, Reader, SheetVisible, Sheets};
+use cell::ToCellValue;
+use rustler::{Encoder, Env, Term};
 use std::io::{Read, Seek};
 use workbook::{with_workbook, Source, WorkbookOperation};
-
-/// A parsed sheet: rows of cells.
-type Sheet = Vec<Vec<ColumnData>>;
 
 /// Lists sheet names, in workbook order.
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -15,7 +15,8 @@ fn sheet_names(source: Source, include_hidden: bool) -> Result<Vec<String>, Stri
 }
 
 /// Parses one sheet (`sheet` is a name) into rows, or every sheet (`sheet` is
-/// `nil`) into `[{name, rows}]`.
+/// `nil`) into `[{name, rows}]`. Cells are encoded straight into their final
+/// Elixir values.
 ///
 /// Runs on a dirty CPU scheduler: path reads are a small part of the work next
 /// to decompression and XML/BIFF decoding, so one scheduler type fits both
@@ -28,9 +29,14 @@ fn parse<'a>(
     include_hidden: bool,
 ) -> Result<Term<'a>, String> {
     match sheet {
-        Some(name) => with_workbook(source, ParseSheet { name }).map(|rows| rows.encode(env)),
-        None => with_workbook(source, ParseAllSheets { include_hidden })
-            .map(|sheets| sheets.encode(env)),
+        Some(name) => with_workbook(source, ParseSheet { env, name }),
+        None => with_workbook(
+            source,
+            ParseAllSheets {
+                env,
+                include_hidden,
+            },
+        ),
     }
 }
 
@@ -46,30 +52,36 @@ impl WorkbookOperation for SheetNames {
     }
 }
 
-struct ParseSheet {
+struct ParseSheet<'a> {
+    env: Env<'a>,
     name: String,
 }
 
-impl WorkbookOperation for ParseSheet {
-    type Output = Sheet;
+impl<'a> WorkbookOperation for ParseSheet<'a> {
+    type Output = Term<'a>;
 
     fn run<RS: Read + Seek>(self, mut workbook: Sheets<RS>) -> Result<Self::Output, String> {
-        parse_sheet(&mut workbook, &self.name)
+        parse_sheet(self.env, &mut workbook, &self.name)
     }
 }
 
-struct ParseAllSheets {
+struct ParseAllSheets<'a> {
+    env: Env<'a>,
     include_hidden: bool,
 }
 
-impl WorkbookOperation for ParseAllSheets {
-    type Output = Vec<(String, Sheet)>;
+impl<'a> WorkbookOperation for ParseAllSheets<'a> {
+    type Output = Term<'a>;
 
     fn run<RS: Read + Seek>(self, mut workbook: Sheets<RS>) -> Result<Self::Output, String> {
-        visible_sheet_names(&workbook, self.include_hidden)
+        let sheets = visible_sheet_names(&workbook, self.include_hidden)
             .into_iter()
-            .map(|name| parse_sheet(&mut workbook, &name).map(|rows| (name, rows)))
-            .collect()
+            .map(|name| {
+                let rows = parse_sheet(self.env, &mut workbook, &name)?;
+                Ok((name, rows))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(sheets.encode(self.env))
     }
 }
 
@@ -85,98 +97,29 @@ fn visible_sheet_names<RS: Read + Seek>(
         .collect()
 }
 
-fn parse_sheet<RS: Read + Seek>(workbook: &mut Sheets<RS>, name: &str) -> Result<Sheet, String> {
-    workbook
+fn parse_sheet<'a, RS: Read + Seek>(
+    env: Env<'a>,
+    workbook: &mut Sheets<RS>,
+    name: &str,
+) -> Result<Term<'a>, String> {
+    let range = workbook
         .worksheet_range(name)
-        .map_err(|error| error.to_string())
-        .map(extract_rows)
+        .map_err(|error| error.to_string())?;
+    Ok(encode_rows(env, &range))
 }
 
-#[derive(NifTaggedEnum, Debug)]
-enum ColumnData {
-    Int(i64),
-    Float(f64),
-    String(String),
-    Bool(bool),
-    DateTime(String),
-    DateTimeIso(String),
-    DurationIso(String),
-    Error(String),
-    Empty,
-}
-
-fn extract_rows(range: calamine::Range<Data>) -> Sheet {
+fn encode_rows<'a>(env: Env<'a>, range: &Range<Data>) -> Term<'a> {
+    let nil = rustler::types::atom::nil().encode(env);
     range
         .rows()
-        .map(|row| row.iter().map(extract_column).collect())
-        .collect()
-}
-
-fn extract_column(cell: &Data) -> ColumnData {
-    match cell {
-        Data::Int(val) => ColumnData::Int(*val),
-        Data::Float(val) => ColumnData::Float(*val),
-        Data::String(val) => ColumnData::String(val.to_string()),
-        Data::Bool(val) => ColumnData::Bool(*val),
-        // Calamine represents duration-formatted cells (e.g. `[h]:mm:ss`) as a
-        // `DateTime` with a `TimeDelta` type. Feeding those to `as_datetime()`
-        // yields a nonsensical date, so route them to a duration instead.
-        Data::DateTime(val) if val.is_duration() => match val.as_duration() {
-            Some(dur) => ColumnData::DurationIso(duration_to_iso(dur)),
-            None => ColumnData::Empty,
-        },
-        Data::DateTime(val) => match val.as_datetime() {
-            Some(ndt) => ColumnData::DateTime(ndt.format("%Y-%m-%dT%H:%M:%S%.f").to_string()),
-            None => ColumnData::Empty,
-        },
-        Data::DateTimeIso(val) => ColumnData::DateTimeIso(val.to_string()),
-        Data::DurationIso(val) => ColumnData::DurationIso(val.to_string()),
-        Data::Error(val) => ColumnData::Error(val.to_string()),
-        Data::Empty => ColumnData::Empty,
-    }
-}
-
-/// Format a chrono `Duration` as an ISO 8601 duration (e.g. `PT1H30M0S`),
-/// matching the shape calamine already uses for ODS `DurationIso` cells.
-fn duration_to_iso(dur: chrono::Duration) -> String {
-    let total_ms = dur.num_milliseconds().max(0);
-    let ms = total_ms % 1000;
-    let total_secs = total_ms / 1000;
-    let secs = total_secs % 60;
-    let mins = (total_secs / 60) % 60;
-    let hours = total_secs / 3600;
-
-    if ms > 0 {
-        format!("PT{hours}H{mins}M{secs}.{ms:03}S")
-    } else {
-        format!("PT{hours}H{mins}M{secs}S")
-    }
+        .map(|row| {
+            row.iter()
+                .map(|cell| encode::encode_cell(env, cell.to_cell_value(), nil))
+                .collect::<Vec<Term<'a>>>()
+                .encode(env)
+        })
+        .collect::<Vec<Term<'a>>>()
+        .encode(env)
 }
 
 rustler::init!("Elixir.Spreadsheet.Calamine");
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use calamine::{ExcelDateTime, ExcelDateTimeType};
-
-    #[test]
-    fn datetime_cells_become_datetimes() {
-        // 2025/10/13 12:00:00 is serial 45943.5.
-        let dt = ExcelDateTime::new(45943.5, ExcelDateTimeType::DateTime, false);
-        match extract_column(&Data::DateTime(dt)) {
-            ColumnData::DateTime(s) => assert_eq!(s, "2025-10-13T12:00:00"),
-            other => panic!("expected DateTime, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn duration_cells_are_not_misread_as_datetimes() {
-        // 1.5 hours = 0.0625 of a day, formatted as a duration ([h]:mm).
-        let dur = ExcelDateTime::new(0.0625, ExcelDateTimeType::TimeDelta, false);
-        match extract_column(&Data::DateTime(dur)) {
-            ColumnData::DurationIso(s) => assert_eq!(s, "PT1H30M0S"),
-            other => panic!("expected DurationIso, got {other:?}"),
-        }
-    }
-}

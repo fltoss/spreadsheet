@@ -131,20 +131,10 @@ defmodule Spreadsheet do
     sheet = sheet_option!(opts)
     include_hidden = boolean_option!(opts, :hidden)
 
-    with {:ok, source} <- source(path_or_content, opts[:format]),
-         {:ok, result} <- Calamine.parse(source, sheet, include_hidden) do
-      {:ok, parse_result(result, sheet)}
+    with {:ok, source} <- source(path_or_content, opts[:format]) do
+      Calamine.parse(source, sheet, include_hidden)
     end
   end
-
-  defp parse_result(rows, sheet) when is_binary(sheet),
-    do: Spreadsheet.Parser.parse_rows(rows)
-
-  defp parse_result(sheets, nil),
-    do:
-      Enum.map(sheets, fn {name, rows} ->
-        {name, Spreadsheet.Parser.parse_rows(rows)}
-      end)
 
   # An invalid `:format` is reported as an error tuple rather than raised, as
   # it always has been.
