@@ -120,9 +120,9 @@ can carry the chart's data and return it as rows.
 | Number (including whole numbers)                  | float, e.g. `1234.0`                                        | float |
 | Text                                              | `String.t()`                                                | `String.t()` |
 | Boolean                                           | `true` / `false`                                            | `true` / `false` |
-| Date or date-time                                 | `%NaiveDateTime{}` (a date alone is midnight)               | `%NaiveDateTime{}` (a date alone is midnight) |
+| Date or date-time                                 | `%NaiveDateTime{}` (a date alone is midnight; milliseconds) | `%NaiveDateTime{}` (a date alone is midnight; sub-second precision as written in the file, up to 6 digits) |
 | Time of day                                       | `%Time{}` (serial in `[0, 1)` without a duration format)    | `%Duration{}` (see below) |
-| Duration (e.g. `[h]:mm:ss`)                       | `%Duration{}` with `hour`, `minute`, `second`, `microsecond` | `%Duration{}` |
+| Duration (e.g. `[h]:mm:ss`)                       | `%Duration{}` with `hour`, `minute`, `second`, `microsecond` | `%Duration{}` (sub-second precision as written in the file, up to 6 digits) |
 | Date outside years 0–9999, or a negative serial   | the raw serial number as a float                            | the raw ISO 8601 string |
 | Formula error (`#DIV/0!`, `#N/A`, …)              | `{:error, "#DIV/0!"}`                                       | `""` (see Known Limitations) |
 | Formula                                           | its cached result, typed as above                           | its cached result |

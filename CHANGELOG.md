@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This release fixes a VM crash on crafted or very sparse files and makes cell
 types consistent across formats, which changes some return values. The public
 functions, their arities and the supported Elixir requirement (`~> 1.18`) are
-unchanged. Read **Breaking changes** before upgrading.
+unchanged. Read **Breaking changes** before upgrading, and **Changed** if you
+match on error messages.
 
 ### Breaking changes
 
@@ -50,28 +51,29 @@ unchanged. Read **Breaking changes** before upgrading.
   serials); it is now the raw serial as a float, e.g. `-1.0`. `.ods` date
   values that do not parse are still returned as the raw string.
   *Migrate:* handle a float where you expected `nil` for such cells.
-- **Sheets above 10 million cells return an error.** The new `:max_cells`
-  option (below) defaults to `10_000_000`, counted as rows × columns from A1.
-  Larger sheets now return `{:error, "sheet \"Name\" has R rows × C columns
-  (N cells), above the :max_cells limit of 10000000"}` instead of being
-  parsed. For `.xls` and `.ods`, which are decoded in full when opened,
-  `sheet_names/2` can return this error too.
-  *Migrate:* pass `max_cells: n` with a higher limit, or `max_cells:
-  :infinity`, for large files you trust.
-- **Invalid options raise `ArgumentError`.** Unknown options (e.g. a typo such
-  as `sheets:`) used to be silently ignored, and an option of the wrong type
-  (`sheet: :Data`, `hidden: "no"`) raised an opaque `ArgumentError` from the
-  NIF ("argument error"). Unknown options now raise via `Keyword.validate!/2`,
-  and invalid values raise an `ArgumentError` naming the option. `sheet: nil`
-  still means "all sheets", and an invalid `:format` still returns
-  `{:error, "Invalid format option: ..."}`.
-  *Migrate:* fix the options the exception names.
-- **Error messages changed.** A missing file now returns
-  `{:error, "could not open \"path\": No such file or directory"}` instead of
-  `"Cannot detect file format"`, and a missing sheet returns
-  `{:error, "sheet \"Name\" not found"}` for every format instead of
-  `"Xlsx error: Worksheet 'Name' not found"` and similar.
-  *Migrate:* if you match on error strings, update them.
+- **Very large workbooks return an error.** The new `:max_cells` option
+  (below) is a cell budget for each call, `50_000_000` by default: every sheet
+  the call builds costs its rows × columns counted from A1, and a sheet that
+  does not fit in what is left returns
+  `{:error, "sheet \"Name\" has R rows × C columns (N cells), above the
+  :max_cells limit of 50000000"}` (naming what earlier sheets used, when
+  they used some) instead of being parsed. The default fits, for example, one
+  sheet of 1,048,576 rows × 47 columns, or 500,000 rows × 100 columns; the
+  result takes roughly 17 bytes per `nil` cell, 33 per float and 57 for
+  typical mixed data. `.xls` and `.ods` workbooks are decoded in full when
+  opened, so for them every sheet of the workbook counts, even when you parse
+  one sheet, and `sheet_names/2` can return the error too.
+  *Migrate:* pass a higher `max_cells: n`, or `max_cells: :infinity`, for
+  large files you trust, or parse sheets one at a time.
+- **Unknown options raise `ArgumentError`.** Options that neither function
+  accepts (e.g. a typo such as `sheets:`) used to be silently ignored; they now
+  raise `ArgumentError` naming them. Duplicate options are still accepted (the
+  first one wins, as before), and `sheet_names/2` accepts and ignores `:sheet`,
+  so one options list still works for both functions.
+  *Migrate:* fix or remove the options the exception names.
+- **The `decimal` dependency is gone** (it was never used). If your project
+  used `Decimal` through this package, add `{:decimal, "~> 2.0"}` to your own
+  dependencies.
 
 ### Fixed
 
@@ -81,16 +83,17 @@ unchanged. Read **Breaking changes** before upgrading.
   raising. `.xls` (cell positions, a forged DIMENSIONS record, compound file
   header fields and looping sector chains) and `.ods` (row and column repeat
   attributes, `<text:s>` space runs) had equivalent problems when the file was
-  opened. All of these are now rejected with `{:error, reason}` before memory
-  is allocated, as long as `:max_cells` is not `:infinity`.
+  opened, and a 1.3 MB `.xlsx` repeating one cell 20 million times peaked at
+  1.2 GB. All of these now return `{:error, reason}` before the memory is
+  allocated (see `:max_cells` below, and **Changed** for the new messages).
+  The checks for malformed files run whatever `:max_cells` is, including
+  `:infinity`; only the cell counts depend on it.
 - Data that does not start at A1 keeps its position (see Breaking changes).
 - Negative durations keep their sign instead of becoming zero.
-- A missing or unreadable file reports the real I/O error instead of "Cannot
-  detect file format".
-- Passing file contents as a path (with the default `format: :filename`) now
-  returns `{:error, reason}` suggesting `format: :binary` instead of raising,
-  and passing a path as content with `format: :binary` suggests
-  `format: :filename`.
+- A missing or unreadable file reports the real I/O error (see **Changed**).
+- Passing file contents as a path (with the default `format: :filename`)
+  returns `{:error, reason}` suggesting `format: :binary` instead of raising
+  `ArgumentError`.
 - Paths no longer have to be valid UTF-8 on Unix.
 - File extensions are matched case-insensitively (`REPORT.XLSX` is opened as
   `.xlsx` directly, so errors name the real problem).
@@ -100,34 +103,88 @@ unchanged. Read **Breaking changes** before upgrading.
   data.
 - Files that make calamine panic (such as `.xls` formulas with truncated
   operands) return `{:error, "could not read workbook: ..."}` instead of
-  raising an opaque `:nif_panicked` `ErlangError`.
+  raising an `ErlangError` with `:nif_panicked`.
 - NaN or infinite numbers (only possible in malformed files) return
   `{:error, "#NUM!"}` instead of an invalid term.
 
 ### Added
 
-- `:max_cells` option for `parse/2` and `sheet_names/2` (default
-  `10_000_000`, `:infinity` disables it): the largest sheet accepted, as rows ×
-  columns counted from A1. `.xlsx`/`.xlsb` sheets are checked against their
-  actual cells (the declared `<dimension>` is ignored); `.xls`/`.ods` files are
-  pre-scanned before calamine opens them.
+- `:max_cells` option for `parse/2` and `sheet_names/2`: a cell budget for the
+  call (default `50_000_000`, `:infinity` disables it). Each sheet built costs
+  its rows × columns counted from A1. `.xlsx`/`.xlsb` sheets are checked
+  against their actual cells while they are read (the declared `<dimension>`
+  is ignored); `.xls`/`.ods` files are pre-scanned before calamine opens them.
 - `Spreadsheet.cell/0` and `Spreadsheet.rows/0` types.
 - Tests and generated fixtures (`test/fixtures/build_fixtures.exs`) covering
   `.xlsb`, data not starting at A1, time-of-day cells, positive and negative
   durations, error cells from LibreOffice exports, the 1904 date epoch,
   out-of-range dates, hidden sheets in `.xls`/`.ods`, non-ASCII sheet names,
-  chart sheets, missing files and sheets, option validation and crafted
-  sparse files.
+  chart sheets, missing files and sheets, option handling, crafted sparse
+  files, repeated cells and an `.xls` template declaring `A1:IV50000`.
 - CI runs `mix format --check-formatted`, `mix credo --strict`,
   `cargo fmt --check`, `cargo clippy -D warnings` and the Rust unit tests, and
-  caches Rust builds. The release workflow fails when the tag does not match
-  the version in `mix.exs` and `Cargo.toml`.
+  caches Rust builds. The release workflow checks, before building, that the
+  tag matches the versions Mix and Cargo report for `mix.exs` and
+  `Cargo.toml`.
 
 ### Changed
 
+- **Error messages.** If you match on error strings:
+  - A missing or unreadable file returns
+    `"could not open \"path\": No such file or directory"` (or the relevant
+    I/O error) instead of `"Xlsx error: I/O error: No such file or directory
+    (os error 2)"` and similar, or `"Cannot detect file format"` for paths
+    without a spreadsheet extension.
+  - A directory returns `"could not open \"path\": is a directory"` instead
+    of `"Cannot detect file format"`.
+  - A missing sheet returns `"sheet \"Name\" not found"` for every format
+    instead of `"Xlsx error: Worksheet 'Name' not found"` and similar.
+  - Content no format can open still returns exactly
+    `"Cannot detect file format"`, with two exceptions that add detail: a
+    path passed with `format: :binary` appends
+    `" (the content looks like a file path; did you mean format: :filename?)"`,
+    and content that starts with a zip signature but is damaged (e.g. a
+    truncated upload) returns the zip error from the `.xlsx` reader, or from
+    the `.ods` reader when it has an OpenDocument spreadsheet `mimetype`, e.g.
+    `"Xlsx error: Zip error: invalid Zip archive: Could not find EOCD"`.
+  - File contents passed as a path return
+    `"could not open the given path: the value looks like file contents
+    rather than a path; did you mean format: :binary?"` instead of raising.
+  - Malformed files return new errors, from `sheet_names/2` too for `.xls`
+    and `.ods`: `"invalid .xls file: ..."` (compound file headers and sector
+    chains that would allocate without bound or loop forever, DIMENSIONS
+    records beyond 65,536 rows × 256 columns), `"invalid .ods file: ..."`
+    (`<text:s>` elements expanding to more than 100 million spaces) and
+    `"invalid sheet \"Name\": ... repeat positions ..."` (`.xlsx`/`.xlsb`
+    sheets with more cell records than twice their rectangle). Some of these
+    files opened in 0.6.4 when the operating system let calamine reserve the
+    memory (a forged FAT sector count reserves 16 GB of address space); where
+    it cannot, they abort the VM.
+  - Files that make calamine panic return
+    `"could not read workbook: ..."` (see Fixed).
+- **Invalid option values raise a descriptive `ArgumentError`.** A `:sheet`
+  that is not a string or `nil`, or a `:hidden` that is not a boolean, already
+  raised in 0.6.4, as an opaque `ArgumentError` ("argument error") from the
+  NIF; the message now names the option. `:hidden` is only checked where it
+  is used (all-sheets parsing and `sheet_names/2`), so `parse/2` with a
+  `:sheet` still ignores it, and `hidden: nil` now means the default instead
+  of raising. `sheet: nil` still means "all sheets", and an invalid `:format`
+  still returns `{:error, "Invalid format option: ..."}`.
 - Cells are converted to their final Elixir values inside the NIF, which
-  removes a second pass over every cell in Elixir. Parsing a 100,000 × 10
-  `.xlsx` sheet is about 20% faster.
+  removes a second pass over every cell in Elixir, and cells referencing the
+  same shared string share one term. Parsing a 100,000 × 10 `.xlsx` sheet
+  with 400,000 shared-string cells takes 0.46 s instead of 0.87 s with 0.6.4,
+  with a lower peak RSS (280 MB instead of 435 MB) and a result of the same size.
+- `rustler` is now an optional dependency with any version
+  (`{:rustler, ">= 0.0.0", optional: true}`, as `rustler_precompiled`
+  recommends), so applications pinning another `rustler` resolve. It is only
+  needed to force a source build, which uses rustler 0.38.
+- `rustler_precompiled` requirement raised from `~> 0.8` to `~> 0.10`.
+- calamine is pinned to exactly 0.36.1 (the version 0.6.4 already resolved
+  to), and quick-xml and zip to the versions it uses, because the pre-scans
+  mirror its internals.
+- Release builds use `codegen-units = 1` and strip debug info, configured in
+  `native/spreadsheet/Cargo.toml`.
 - The six internal NIFs are collapsed into two (`sheet_names/3`, `parse/4`)
   that take `{:path, path}` or `{:binary, content}`; both still run on dirty
   CPU schedulers.
@@ -137,9 +194,7 @@ unchanged. Read **Breaking changes** before upgrading.
 
 ### Removed
 
-- **Dependency change:** the runtime dependency on `decimal` is gone (it was
-  never used). If your project used `Decimal` through this package, add
-  `{:decimal, "~> 2.0"}` to your own dependencies.
+- The `decimal` runtime dependency (see Breaking changes).
 - The unused `igniter` dev/test dependency, the rustler `serde` feature and
   the direct `serde` crate dependency.
 - Internal modules and functions that were never public API (`@moduledoc
