@@ -30,8 +30,9 @@ pub fn read_sheet<'a, RS: Read + Seek>(
         .map(|sheet| sheet.typ)
         .ok_or_else(|| format!("sheet {name:?} not found"))?;
 
-    // Chart sheets and VBA modules hold no cells.
-    if matches!(sheet_type, SheetType::ChartSheet | SheetType::Vba) {
+    // VBA modules hold no cells. Chart sheets are still read, because .xls
+    // chart sheets can carry the chart's data.
+    if sheet_type == SheetType::Vba {
         return Ok(empty_list(env));
     }
 
@@ -45,6 +46,8 @@ pub fn read_sheet<'a, RS: Read + Seek>(
             Err(XlsxError::NotAWorksheet(_)) => Ok(empty_list(env)),
             Err(error) => Err(format!("Xlsx error: {error}")),
         },
+        // calamine's .xlsb cell reader fails on chart sheets, which hold no cells.
+        Sheets::Xlsb(_) if sheet_type == SheetType::ChartSheet => Ok(empty_list(env)),
         Sheets::Xlsb(xlsb) => {
             let mut reader = xlsb
                 .worksheet_cells_reader(name)

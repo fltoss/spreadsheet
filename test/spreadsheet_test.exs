@@ -213,6 +213,13 @@ defmodule SpreadsheetTest do
       end
     end
 
+    test "a file that makes the reader panic returns an error" do
+      path = Path.join(@base_path, "calamine/ptgexp-truncated-operand.xls")
+
+      assert {:error, "could not read workbook: " <> _reason} =
+               Spreadsheet.parse(path)
+    end
+
     test "content that is not a spreadsheet cannot be detected" do
       assert Spreadsheet.parse("plain text", format: :binary) ==
                {:error,

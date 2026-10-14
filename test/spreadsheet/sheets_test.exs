@@ -52,4 +52,20 @@ defmodule Spreadsheet.SheetsTest do
     assert Spreadsheet.parse(path, sheet: "Chart") == {:ok, []}
     assert Spreadsheet.parse(path) == {:ok, [{"Data", [[1.0]]}, {"Chart", []}]}
   end
+
+  test ".xls chart sheets keep the chart's data" do
+    path = fixture("calamine/any_sheets.xls")
+
+    assert Spreadsheet.parse(path, sheet: "Chart") ==
+             {:ok, [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]}
+  end
+
+  test ".xlsb chart sheets have no rows" do
+    path = fixture("calamine/any_sheets.xlsb")
+
+    assert Spreadsheet.sheet_names(path, hidden: true) ==
+             {:ok, ["Visible", "Hidden", "VeryHidden", "Chart"]}
+
+    assert Spreadsheet.parse(path, sheet: "Chart") == {:ok, []}
+  end
 end

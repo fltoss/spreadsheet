@@ -6,8 +6,10 @@
 use crate::limits::{self, CellLimit};
 use calamine::{open_workbook_from_rs, Error, Ods, Sheets, Xls, Xlsb, Xlsx};
 use rustler::{Atom, Binary, Decoder, NifResult, Term};
+use std::any::Any;
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read, Seek};
+use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
 mod atoms {
@@ -54,13 +56,30 @@ pub fn with_workbook<O: WorkbookOperation>(
     limit: CellLimit,
     operation: O,
 ) -> Result<O::Output, String> {
-    match source {
+    // calamine panics on some malformed files (e.g. truncated formula
+    // operands in .xls). Report those like any other unreadable file instead
+    // of raising an opaque `:nif_panicked` error.
+    panic::catch_unwind(AssertUnwindSafe(|| match source {
         Source::Path(path) => {
             let path = decode_path(path.as_slice())?;
             operation.run(open_path(&path, limit)?)
         }
         Source::Binary(content) => operation.run(open_binary(content.as_slice(), limit)?),
-    }
+    }))
+    .unwrap_or_else(|payload| {
+        Err(format!(
+            "could not read workbook: {}",
+            panic_message(&*payload)
+        ))
+    })
+}
+
+fn panic_message(payload: &(dyn Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("the reader panicked")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

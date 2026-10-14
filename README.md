@@ -109,7 +109,8 @@ length. A sheet whose data occupies `C3:D4` returns:
 ```
 
 Empty sheets, chart sheets and other sheets without cells return `[]`. They are
-still listed by `sheet_names/2`.
+still listed by `sheet_names/2`. The exception is `.xls` chart sheets, which
+can carry the chart's data and return it as rows.
 
 ### Data Types
 

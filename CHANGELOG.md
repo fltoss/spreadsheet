@@ -94,8 +94,13 @@ unchanged. Read **Breaking changes** before upgrading.
 - Paths no longer have to be valid UTF-8 on Unix.
 - File extensions are matched case-insensitively (`REPORT.XLSX` is opened as
   `.xlsx` directly, so errors name the real problem).
-- Chart sheets and VBA modules are skipped without reading them (they return
-  `[]`), so their content can no longer make a whole-workbook parse fail.
+- VBA modules and `.xlsb` chart sheets are skipped without reading them (they
+  return `[]`), so their content can no longer make a whole-workbook parse
+  fail. `.xls` chart sheets are still read, since they can carry the chart's
+  data.
+- Files that make calamine panic (such as `.xls` formulas with truncated
+  operands) return `{:error, "could not read workbook: ..."}` instead of
+  raising an opaque `:nif_panicked` `ErlangError`.
 - NaN or infinite numbers (only possible in malformed files) return
   `{:error, "#NUM!"}` instead of an invalid term.
 
