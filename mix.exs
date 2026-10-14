@@ -13,7 +13,9 @@ defmodule Spreadsheet.MixProject do
       description: description(),
       package: package(),
       docs: docs(),
-      deps: deps()
+      deps: deps(),
+      # The fixture generator is a script, not a test file.
+      test_ignore_filters: [&String.starts_with?(&1, "test/fixtures/")]
     ]
   end
 
