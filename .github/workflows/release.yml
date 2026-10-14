@@ -30,11 +30,29 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v7
 
-    - name: Extract project version
+    - name: Extract project version and check the tag
       shell: bash
       run: |
-        # Get the project version from mix.exs
-        echo "PROJECT_VERSION=$(sed -n 's/^  @version "\(.*\)"/\1/p' mix.exs | head -n1)" >> $GITHUB_ENV
+        # Exactly one `@version "x.y.z"` line must exist in mix.exs.
+        matches=$(grep -cE '^  @version "[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?"$' mix.exs || true)
+        if [ "$matches" != "1" ]; then
+          echo "::error::expected exactly one '@version \"x.y.z\"' line in mix.exs, found $matches"
+          exit 1
+        fi
+        version=$(grep -E '^  @version "' mix.exs | cut -d'"' -f2)
+
+        crate_version=$(grep -m1 -E '^version = "' native/spreadsheet/Cargo.toml | cut -d'"' -f2)
+        if [ "$crate_version" != "$version" ]; then
+          echo "::error::native/spreadsheet/Cargo.toml version $crate_version does not match mix.exs version $version"
+          exit 1
+        fi
+
+        if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+          echo "::error::tag $GITHUB_REF_NAME does not match mix.exs version v$version"
+          exit 1
+        fi
+
+        echo "PROJECT_VERSION=$version" >> "$GITHUB_ENV"
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable

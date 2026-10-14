@@ -43,6 +43,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/spreadsheet
       - uses: erlef/setup-beam@v1
         with:
           otp-version: ${{matrix.otp}}
@@ -61,4 +64,43 @@ jobs:
       - run: mix compile --warnings-as-errors
         env:
           RUST_BACKTRACE: 1
-      - run: mix test
+      - run: mix test --warnings-as-errors
+
+  lint:
+    runs-on: ubuntu-latest
+    name: Formatting, Credo, Clippy and Rust unit tests
+    env:
+      MIX_ENV: test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/spreadsheet
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: 28.5
+          elixir-version: 1.19.5
+      - name: Cache hex deps
+        uses: actions/cache@v6
+        with:
+          path: |
+            deps
+            _build
+            !_build/*/lib/spreadsheet
+          key: ${{ runner.os }}-lint-mix-${{ hashFiles(format('{0}{1}', github.workspace, '/mix.lock')) }}
+      - run: mix deps.get
+      - run: mix format --check-formatted
+      - run: mix credo --strict
+      - name: cargo fmt
+        working-directory: native/spreadsheet
+        run: cargo fmt --check
+      - name: cargo clippy
+        working-directory: native/spreadsheet
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Rust unit tests
+        working-directory: native/spreadsheet
+        run: cargo test
