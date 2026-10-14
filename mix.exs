@@ -27,9 +27,7 @@ defmodule Spreadsheet.MixProject do
     [
       {:rustler_precompiled, "~> 0.8"},
       {:rustler, "~> 0.38.0", runtime: false, optional: true},
-      {:decimal, "~> 2.0 or ~> 3.0"},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
-      {:igniter, "~> 0.5", only: [:dev, :test]},
       {:credo, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end

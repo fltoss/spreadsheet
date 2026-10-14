@@ -10,9 +10,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 calamine = { version = "0.36.0", features = ["chrono"]}
-rustler = {version = "0.38.0", features = ["serde"]}
+rustler = "0.38.0"
 chrono = "0.4.44"
-serde = "1.0.228"
 # zip turns off flate2 defaults, and since flate2 1.1.10 that also drops runtime
 # CPU feature detection (SIMD) in zlib-rs. Re-enable it without changing the backend.
 flate2 = { version = "1.1.10", default-features = false, features = ["runtime_detection"] }
