@@ -32,21 +32,12 @@ defmodule Spreadsheet.Calamine do
     targets: targets,
     nif_versions: nif_versions
 
-  def sheet_names_from_binary(_content, _hidden),
+  # `source` is `{:path, path}` or `{:binary, content}`.
+  def sheet_names(_source, _include_hidden, _max_cells),
     do: :erlang.nif_error(:nif_not_loaded)
 
-  def sheet_names_from_path(_path, _hidden),
-    do: :erlang.nif_error(:nif_not_loaded)
-
-  def parse_from_binary(_content, _sheet_name),
-    do: :erlang.nif_error(:nif_not_loaded)
-
-  def parse_from_path(_path, _sheet_name),
-    do: :erlang.nif_error(:nif_not_loaded)
-
-  def parse_all_from_path(_path, _hidden),
-    do: :erlang.nif_error(:nif_not_loaded)
-
-  def parse_all_from_binary(_content, _hidden),
+  # `sheet` is a sheet name, or `nil` to parse every sheet. `max_cells` is a
+  # positive integer, or `nil` for no limit.
+  def parse(_source, _sheet, _include_hidden, _max_cells),
     do: :erlang.nif_error(:nif_not_loaded)
 end

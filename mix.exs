@@ -2,7 +2,7 @@ defmodule Spreadsheet.MixProject do
   use Mix.Project
 
   @github_url "https://github.com/fltoss/spreadsheet"
-  @version "0.6.4"
+  @version "0.7.0"
 
   def project do
     [
@@ -13,7 +13,9 @@ defmodule Spreadsheet.MixProject do
       description: description(),
       package: package(),
       docs: docs(),
-      deps: deps()
+      deps: deps(),
+      # The fixture generator is a script, not a test file.
+      test_ignore_filters: [&String.starts_with?(&1, "test/fixtures/")]
     ]
   end
 
@@ -25,11 +27,9 @@ defmodule Spreadsheet.MixProject do
 
   defp deps do
     [
-      {:rustler_precompiled, "~> 0.8"},
-      {:rustler, "~> 0.38.0", runtime: false, optional: true},
-      {:decimal, "~> 2.0 or ~> 3.0"},
+      {:rustler_precompiled, "~> 0.10"},
+      {:rustler, ">= 0.0.0", optional: true},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
-      {:igniter, "~> 0.5", only: [:dev, :test]},
       {:credo, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
@@ -61,7 +61,9 @@ defmodule Spreadsheet.MixProject do
       main: "Spreadsheet",
       source_url: @github_url,
       source_ref: "v#{@version}",
-      extras: ["CHANGELOG.md"]
+      extras: ["CHANGELOG.md"],
+      # The changelog names removed and internal functions on purpose.
+      skip_undefined_reference_warnings_on: ["CHANGELOG.md"]
     ]
   end
 

@@ -1,7 +1,7 @@
 defmodule SpreadsheetTest do
   use ExUnit.Case
 
-  @base_path Path.join(__DIR__, "/files")
+  @base_path Path.join(__DIR__, "fixtures")
 
   describe "sheet_names/2" do
     test "gets the sheet_names from binary content" do
@@ -123,34 +123,162 @@ defmodule SpreadsheetTest do
     end
   end
 
-  describe "Calamine.parse_all_from_path/2 (bulk NIF — bug #4)" do
-    # Bug #4: parse_all_sheets currently re-opens the workbook for each sheet.
-    # A bulk NIF lets us open once and return all sheets.
-    test "returns [{sheet_name, rows}] in workbook order, honouring hidden" do
-      path = Path.join(@base_path, "test_file_1_hidden.xlsx")
-
-      assert {:ok, all_sheets} =
-               Spreadsheet.Calamine.parse_all_from_path(path, true)
-
-      assert [{"Sheet2", _}, {"Sheet1", _}] = all_sheets
-
-      assert {:ok, [{"Sheet1", _}]} =
-               Spreadsheet.Calamine.parse_all_from_path(path, false)
+  describe "option validation" do
+    setup do
+      %{path: Path.join(@base_path, "test_file_1.xlsx")}
     end
 
-    test "binary variant returns the same shape" do
+    test "unknown options raise", %{path: path} do
+      assert_raise ArgumentError, ~r/unknown keys \[:sheets\]/, fn ->
+        Spreadsheet.parse(path, sheets: "Sheet1")
+      end
+
+      assert_raise ArgumentError, ~r/unknown keys \[:sheets\]/, fn ->
+        Spreadsheet.sheet_names(path, sheets: "Sheet1")
+      end
+
+      assert_raise ArgumentError,
+                   ~r/expected options to be a keyword list/,
+                   fn ->
+                     Spreadsheet.parse(path, [:hidden])
+                   end
+    end
+
+    test "duplicate options do not raise; the first one wins", %{path: path} do
+      assert {:ok, [_header | _rows]} =
+               Spreadsheet.parse(path, sheet: "Sheet1", sheet: "Other")
+
+      assert Spreadsheet.parse(path, sheet: "Other", sheet: "Sheet1") ==
+               {:error, ~s(sheet "Other" not found)}
+
+      assert {:ok, ["Sheet1"]} =
+               Spreadsheet.sheet_names(path, hidden: true, hidden: "ignored")
+    end
+
+    test "sheet_names/2 accepts and ignores :sheet", %{path: path} do
+      options = [sheet: "Sheet1", hidden: false]
+
+      assert Spreadsheet.sheet_names(path, options) == {:ok, ["Sheet1"]}
+      assert {:ok, [_header | _rows]} = Spreadsheet.parse(path, options)
+    end
+
+    test "a non-string :sheet raises", %{path: path} do
+      assert_raise ArgumentError,
+                   ~r/expected :sheet to be a string.*got: :Sheet1/,
+                   fn ->
+                     Spreadsheet.parse(path, sheet: :Sheet1)
+                   end
+    end
+
+    test "sheet: nil parses every sheet", %{path: path} do
+      assert {:ok, [{"Sheet1", _rows}]} = Spreadsheet.parse(path, sheet: nil)
+    end
+
+    test "a non-boolean :hidden raises when it is used", %{path: path} do
+      assert_raise ArgumentError,
+                   ~r/expected :hidden to be a boolean, got: "no"/,
+                   fn ->
+                     Spreadsheet.parse(path, hidden: "no")
+                   end
+
+      assert_raise ArgumentError, ~r/expected :hidden to be a boolean/, fn ->
+        Spreadsheet.sheet_names(path, hidden: 0)
+      end
+    end
+
+    test ":hidden is ignored when a sheet is named", %{path: path} do
+      assert {:ok, [_header | _rows]} =
+               Spreadsheet.parse(path, sheet: "Sheet1", hidden: "anything")
+    end
+
+    test "hidden: nil means the default", %{path: path} do
+      hidden_path = Path.join(@base_path, "test_file_1_hidden.xlsx")
+
+      assert Spreadsheet.sheet_names(hidden_path, hidden: nil) ==
+               Spreadsheet.sheet_names(hidden_path)
+
+      assert {:ok, [{"Sheet1", _rows}]} = Spreadsheet.parse(path, hidden: nil)
+    end
+  end
+
+  describe "file errors" do
+    test "a missing file reports the I/O error" do
+      path = Path.join(@base_path, "does_not_exist.xlsx")
+
+      assert Spreadsheet.parse(path) ==
+               {:error,
+                "could not open #{inspect(path)}: No such file or directory"}
+
+      assert {:error, "could not open " <> _} = Spreadsheet.sheet_names(path)
+    end
+
+    test "a directory is not a spreadsheet" do
+      assert Spreadsheet.parse(@base_path) ==
+               {:error, "could not open #{inspect(@base_path)}: is a directory"}
+    end
+
+    test "file contents passed as a path return a hint instead of raising" do
       content = File.read!(Path.join(@base_path, "test_file_1.xlsx"))
 
-      assert {:ok, [{"Sheet1", [header | _]}]} =
-               Spreadsheet.Calamine.parse_all_from_binary(content, true)
+      assert {:error, message} = Spreadsheet.parse(content)
+      assert message =~ "did you mean format: :binary?"
 
-      # Raw NIF output uses Rustler's tagged form; parse_rows would unwrap it.
-      assert header == [
-               string: "Dates",
-               string: "Numbers",
-               string: "Percentages",
-               string: "Strings"
-             ]
+      assert {:error, message} = Spreadsheet.sheet_names(<<0xFF, 0, 0xFE>>)
+      assert message =~ "did you mean format: :binary?"
+    end
+
+    test "a path passed as content returns a hint" do
+      path = Path.join(@base_path, "test_file_1.xlsx")
+
+      assert {:error, message} = Spreadsheet.parse(path, format: :binary)
+      assert message =~ "did you mean format: :filename?"
+    end
+
+    test "non-UTF-8 paths are accepted" do
+      assert {:error, message} =
+               Spreadsheet.parse(<<"missing-", 0xE9, ".xlsx">>)
+
+      assert message =~ "No such file or directory"
+    end
+
+    test "a missing sheet returns an error naming the sheet" do
+      for file <-
+            ~w(test_file_1.xlsx test_file_1.xls test_file_1.ods types.xlsb) do
+        path = Path.join(@base_path, file)
+
+        assert Spreadsheet.parse(path, sheet: "Nope") ==
+                 {:error, ~s(sheet "Nope" not found)}
+      end
+    end
+
+    test "a file that makes the reader panic returns an error" do
+      path = Path.join(@base_path, "calamine/ptgexp-truncated-operand.xls")
+
+      assert {:error, "could not read workbook: " <> _reason} =
+               Spreadsheet.parse(path)
+    end
+
+    test "content that is not a spreadsheet cannot be detected" do
+      # The same message as 0.6.
+      assert Spreadsheet.parse("plain text", format: :binary) ==
+               {:error, "Cannot detect file format"}
+
+      assert Spreadsheet.sheet_names("plain text", format: :binary) ==
+               {:error, "Cannot detect file format"}
+    end
+
+    test "truncated zip content reports the zip error" do
+      xlsx = File.read!(Path.join(@base_path, "test_file_1.xlsx"))
+
+      assert {:error, "Xlsx error: Zip error: " <> _reason} =
+               Spreadsheet.parse(binary_part(xlsx, 0, 1000), format: :binary)
+
+      ods = File.read!(Path.join(@base_path, "test_file_1.ods"))
+
+      assert {:error, "Ods error: Zip error: " <> _reason} =
+               Spreadsheet.sheet_names(binary_part(ods, 0, 1000),
+                 format: :binary
+               )
     end
   end
 
@@ -184,15 +312,15 @@ defmodule SpreadsheetTest do
       assert header == ["Dates", "Numbers", "Percentages", "Strings"]
 
       assert rows == [
-               [~N[2024-12-12 00:00:00], 1234, 0.12, "Foobar"],
+               [~N[2024-12-12 00:00:00], 1234.0, 0.12, "Foobar"],
                [
                  ~N[1993-11-21 00:00:00],
                  "00012345",
                  0.12119999999999999,
                  nil
                ],
-               [~N[1987-05-08 00:00:00], 1122, "12", nil],
-               [~N[1994-05-22 00:00:00], "12,12", 12, nil],
+               [~N[1987-05-08 00:00:00], 1122.0, "12", nil],
+               [~N[1994-05-22 00:00:00], "12,12", 12.0, nil],
                ["2024-01-01", 11.12, "33.12%", "123"],
                [~N[1987-05-08 20:10:12], nil, nil, nil],
                [~N[1987-05-08 20:10:12], nil, nil, nil]
@@ -221,15 +349,15 @@ defmodule SpreadsheetTest do
                :ok,
                [
                  ["Dates", "Numbers", "Percentages", "Strings"],
-                 [~N[2024-12-12 00:00:00], 1234, 0.12, "Foobar"],
+                 [~N[2024-12-12 00:00:00], 1234.0, 0.12, "Foobar"],
                  [
                    ~N[1993-11-21 00:00:00],
                    "00012345",
                    0.12119999999999999,
                    nil
                  ],
-                 [~N[1987-05-08 00:00:00], 1122, "12", nil],
-                 [~N[1994-05-22 00:00:00], "12,12", 12, nil],
+                 [~N[1987-05-08 00:00:00], 1122.0, "12", nil],
+                 [~N[1994-05-22 00:00:00], "12,12", 12.0, nil],
                  ["2024-01-01", 11.12, "33.12%", "123"],
                  [~N[1987-05-08 20:10:12], nil, nil, nil],
                  [~N[1987-05-08 20:10:12], nil, nil, nil]
