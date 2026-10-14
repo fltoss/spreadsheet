@@ -1,42 +1,57 @@
 defmodule Spreadsheet do
-  @moduledoc """
-  A fast, memory-efficient Elixir library for parsing spreadsheet files.
+  @external_resource readme = Path.join([__DIR__, "..", "README.md"])
 
-  This library provides a simple API for working with Excel (.xlsx, .xls) and
-  LibreOffice (.ods) files. It's powered by Rust and Calamine for high-performance
-  parsing.
-
-  ## Features
-
-  - Fast performance with native Rust implementation
-  - Support for multiple formats: .xls, .xla, .xlsx, .xlsm, .xlam, .xlsb, and .ods
-  - Memory efficient parsing from file paths or binary content
-  - Sheet management with support for hidden sheets
-  - Smart type handling with automatic date and number conversion
-  """
+  @moduledoc readme
+             |> File.read!()
+             |> String.split("<!-- MDOC !-->")
+             |> Enum.fetch!(1)
 
   alias Spreadsheet.Calamine
 
   @default_max_cells 10_000_000
 
-  @doc """
-  Returns a list of sheet names from a spreadsheet file or binary content.
+  # The NIF takes an unsigned 64-bit limit, or nil for no limit.
+  @max_u64 18_446_744_073_709_551_615
 
-  Supports Excel (.xlsx, .xls) and LibreOffice (.ods) file formats.
+  @typedoc """
+  A cell value: `nil`, a float, a string, a boolean, a `NaiveDateTime`, a
+  `Time`, a `Duration`, or `{:error, code}` for a formula error. See
+  "Data Types" in the module documentation.
+  """
+  @type cell ::
+          nil
+          | float()
+          | String.t()
+          | boolean()
+          | NaiveDateTime.t()
+          | Time.t()
+          | Duration.t()
+          | {:error, String.t()}
+
+  @typedoc "A sheet's rows, anchored at A1 and padded with `nil`."
+  @type rows :: [[cell()]]
+
+  @doc """
+  Returns the names of the sheets in a spreadsheet, in workbook order.
 
   ## Options
 
-    * `:format` - Specifies the input format. Either `:filename` (default) or `:binary`.
-    * `:hidden` - When `false`, excludes hidden sheets. Defaults to `true`.
+    * `:format` - `:filename` (default) when the first argument is a path, or
+      `:binary` when it is the file's content.
+    * `:hidden` - when `false`, excludes hidden and very hidden sheets.
+      Defaults to `true`.
+    * `:max_cells` - the largest sheet accepted, as rows × columns counted from
+      A1, or `:infinity`. Defaults to `#{@default_max_cells}`. Listing sheets
+      only reads cells for .xls and .ods files, which are decoded in full when
+      opened, so only those can exceed it here.
+
+  Returns `{:error, reason}` when the file cannot be read or parsed, and
+  raises `ArgumentError` for unknown or invalid options.
 
   ## Examples
 
       # From a file path (default)
       Spreadsheet.sheet_names("workbook.xlsx")
-      {:ok, ["Sheet1", "Sheet2"]}
-
-      # From a file path (explicit)
-      Spreadsheet.sheet_names("workbook.xlsx", format: :filename)
       {:ok, ["Sheet1", "Sheet2"]}
 
       # From binary content
@@ -50,7 +65,7 @@ defmodule Spreadsheet do
 
   """
   @spec sheet_names(binary(), keyword()) ::
-          {:ok, list(String.t())} | {:error, String.t()}
+          {:ok, [String.t()]} | {:error, String.t()}
   def sheet_names(path_or_content, opts \\ [])
       when is_binary(path_or_content) and is_list(opts) do
     opts =
@@ -69,29 +84,32 @@ defmodule Spreadsheet do
   end
 
   @doc """
-  Parses a specific sheet or all sheets from a spreadsheet file or binary content.
+  Parses one sheet, or every sheet, of a spreadsheet.
 
-  When called without the `:sheet` option, parses all sheets and returns
-  a list of tuples containing `{sheet_name, sheet_data}`.
+  With the `:sheet` option, returns that sheet's rows. Without it (or with
+  `sheet: nil`), returns `{sheet_name, rows}` tuples for every sheet in
+  workbook order.
 
-  When called with the `:sheet` option, parses only the specified sheet and
-  returns its data as a list of lists.
-
-  Returns the sheet data as a list of lists, where each inner list represents a row.
-  The first row typically contains headers.
-
-  Dates are automatically parsed to `NaiveDateTime` when possible, and empty cells
-  are converted to `nil`.
+  Rows are lists of cells anchored at A1: row 0 is spreadsheet row 1 and
+  column 0 is column A, with leading empty rows and columns padded with `nil`.
+  See "Data Types" in the module documentation for the value of each cell.
 
   ## Options
 
-    * `:sheet` - The name of the sheet to parse. If not provided, parses all sheets.
-    * `:format` - Specifies the input format. Either `:filename` (default) or `:binary`.
-    * `:hidden` - When `false`, excludes hidden sheets from all-sheets parsing. Defaults to `true`.
-      Ignored when `:sheet` is provided — naming a sheet explicitly always parses it.
+    * `:sheet` - the name of the sheet to parse. Defaults to `nil` (all
+      sheets).
+    * `:format` - `:filename` (default) when the first argument is a path, or
+      `:binary` when it is the file's content.
+    * `:hidden` - when `false`, excludes hidden and very hidden sheets from
+      all-sheets parsing. Defaults to `true`. Ignored when `:sheet` is given:
+      naming a sheet always parses it.
+    * `:max_cells` - the largest sheet accepted, as rows × columns counted from
+      A1, or `:infinity`. Defaults to `#{@default_max_cells}`. Larger sheets
+      return an error before they are expanded.
 
-  Excel formula errors (`#REF!`, `#DIV/0!`, etc.) are returned as `{:error, reason}`
-  tuples so they remain distinguishable from text cells.
+  Returns `{:error, reason}` when the file cannot be read or parsed, the sheet
+  does not exist or a sheet exceeds `:max_cells`, and raises `ArgumentError`
+  for unknown or invalid options.
 
   ## Examples
 
@@ -115,25 +133,18 @@ defmodule Spreadsheet do
         ]}
       ]}
 
-      # Parse all sheets from binary content
+      # Parse all visible sheets from binary content
       content = File.read!("sales.xlsx")
-      Spreadsheet.parse(content, format: :binary)
-      {:ok, [
-        {"Q1 Data", [...]},
-        {"Q2 Data", [...]}
-      ]}
+      Spreadsheet.parse(content, format: :binary, hidden: false)
+      {:ok, [{"Q1 Data", [...]}, {"Q2 Data", [...]}]}
 
-      # Parse all sheets excluding hidden ones
-      Spreadsheet.parse("sales.xlsx", hidden: false)
-      {:ok, [{"Visible Sheet", [...]}]}
-
-      # Parse specific sheet from binary
-      Spreadsheet.parse(content, sheet: "Q1 Data", format: :binary)
+      # Allow a larger sheet
+      Spreadsheet.parse("big.xlsx", sheet: "Data", max_cells: 50_000_000)
       {:ok, [[...]]}
 
   """
   @spec parse(binary(), keyword()) ::
-          {:ok, list() | list({String.t(), list()})} | {:error, binary()}
+          {:ok, rows() | [{String.t(), rows()}]} | {:error, String.t()}
   def parse(path_or_content, opts \\ [])
       when is_binary(path_or_content) and is_list(opts) do
     opts =
@@ -151,6 +162,39 @@ defmodule Spreadsheet do
     with {:ok, source} <- source(path_or_content, opts[:format]) do
       Calamine.parse(source, sheet, include_hidden, max_cells)
     end
+  end
+
+  @doc """
+  Returns a list of sheet names from spreadsheet binary content.
+
+  This function is deprecated. Use `sheet_names/2` with `format: :binary` instead.
+
+  ## Options
+
+    * `:hidden` - When `false`, excludes hidden sheets. Defaults to `true`.
+    * `:max_cells` - See `sheet_names/2`.
+
+  """
+  @deprecated "Use sheet_names/2 with format: :binary instead"
+  @spec sheet_names_from_binary(binary(), keyword()) ::
+          {:ok, [String.t()]} | {:error, String.t()}
+  def sheet_names_from_binary(content, opts \\ [])
+      when is_binary(content) and is_list(opts) do
+    sheet_names(content, Keyword.put(opts, :format, :binary))
+  end
+
+  @doc """
+  Parses a specific sheet from spreadsheet binary content.
+
+  This function is deprecated. Use `parse/2` with `sheet:` and `format: :binary` options instead.
+
+  Returns the sheet's rows, as `parse/2` does.
+  """
+  @deprecated "Use parse/2 with sheet: and format: :binary options instead"
+  @spec parse_from_binary(binary(), binary()) ::
+          {:ok, rows()} | {:error, String.t()}
+  def parse_from_binary(content, sheet_name) do
+    parse(content, sheet: sheet_name, format: :binary)
   end
 
   # An invalid `:format` is reported as an error tuple rather than raised, as
@@ -173,9 +217,6 @@ defmodule Spreadsheet do
               "expected :sheet to be a string (or nil for all sheets), got: #{inspect(other)}"
     end
   end
-
-  # The NIF takes an unsigned 64-bit limit, or nil for no limit.
-  @max_u64 18_446_744_073_709_551_615
 
   defp max_cells_option!(opts) do
     case opts[:max_cells] do
@@ -200,41 +241,5 @@ defmodule Spreadsheet do
         raise ArgumentError,
               "expected #{inspect(key)} to be a boolean, got: #{inspect(other)}"
     end
-  end
-
-  @doc """
-  Returns a list of sheet names from spreadsheet binary content.
-
-  This function is deprecated. Use `sheet_names/2` with `format: :binary` instead.
-
-  ## Options
-
-    * `:hidden` - When `false`, excludes hidden sheets. Defaults to `true`.
-
-  """
-  @deprecated "Use sheet_names/2 with format: :binary instead"
-  @spec sheet_names_from_binary(binary(), keyword()) ::
-          {:ok, list(String.t())} | {:error, String.t()}
-  def sheet_names_from_binary(content, opts \\ [])
-      when is_binary(content) and is_list(opts) do
-    sheet_names(content, Keyword.put(opts, :format, :binary))
-  end
-
-  @doc """
-  Parses a specific sheet from spreadsheet binary content.
-
-  This function is deprecated. Use `parse/2` with `sheet:` and `format: :binary` options instead.
-
-  Returns the sheet data as a list of lists, where each inner list represents a row.
-
-  Dates are automatically parsed to `NaiveDateTime` when possible, and empty cells
-  are converted to `nil`.
-
-  """
-  @deprecated "Use parse/2 with sheet: and format: :binary options instead"
-  @spec parse_from_binary(binary(), binary()) ::
-          {:ok, list()} | {:error, String.t()}
-  def parse_from_binary(content, sheet_name) do
-    parse(content, sheet: sheet_name, format: :binary)
   end
 end
