@@ -32,8 +32,9 @@ fn sheet_names(
 
 /// Parses one sheet (`sheet` is a name) into rows, or every sheet (`sheet` is
 /// `nil`) into `[{name, rows}]`. Cells are encoded straight into their final
-/// Elixir values. Sheets whose rows × columns (from A1) exceed `max_cells`
-/// are rejected before their rows are built.
+/// Elixir values. `max_cells` bounds the rows × columns (from A1) of every
+/// sheet the call builds, together; a sheet that does not fit is rejected
+/// before its rows are built.
 ///
 /// Runs on a dirty CPU scheduler: path reads are a small part of the work next
 /// to decompression and XML/BIFF decoding, so one scheduler type fits both
@@ -47,15 +48,15 @@ fn parse<'a>(
     max_cells: Option<u64>,
 ) -> Result<Term<'a>, String> {
     guard(|| {
-        let budget = Budget::new(max_cells);
+        let mut budget = Budget::new(max_cells);
         let mut workbook = workbook::open(&source, &budget)?;
         match sheet {
-            Some(name) => sheet::read_sheet(env, &mut workbook, &name, &budget),
+            Some(name) => sheet::read_sheet(env, &mut workbook, &name, &mut budget),
             None => {
                 let sheets = workbook::sheet_names(&workbook, include_hidden)
                     .into_iter()
                     .map(|name| {
-                        let rows = sheet::read_sheet(env, &mut workbook, &name, &budget)?;
+                        let rows = sheet::read_sheet(env, &mut workbook, &name, &mut budget)?;
                         Ok((name, rows))
                     })
                     .collect::<Result<Vec<_>, Error>>()?;

@@ -62,6 +62,9 @@ fn scan<RS: Read + Seek + ?Sized>(reader: &mut RS, budget: &Budget) -> Result<()
 
 /// Scans `content.xml`.
 fn scan_content<R: BufRead>(content: R, budget: &Budget) -> Result<(), Error> {
+    // calamine decodes every table when it opens the file, so all of them
+    // count against the budget, even when only one sheet is parsed.
+    let mut budget = *budget;
     let mut xml = Reader::from_reader(content);
     let config = xml.config_mut();
     config.check_end_names = false;
@@ -82,7 +85,7 @@ fn scan_content<R: BufRead>(content: R, budget: &Budget) -> Result<(), Error> {
                 let Some(table) = scan_table(&mut xml)? else {
                     return Ok(());
                 };
-                table.check(&name, budget)?;
+                table.check(&name, &mut budget)?;
                 spaces += table.spaces;
                 if spaces > MAX_SPACES {
                     return Err(Error::InvalidOds(format!(
@@ -127,9 +130,10 @@ struct Table {
 }
 
 impl Table {
-    fn check(&self, name: &str, budget: &Budget) -> Result<(), Error> {
+    fn check(&self, name: &str, budget: &mut Budget) -> Result<(), Error> {
         budget.check_rectangle(name, self.rows, self.columns)?;
-        budget.check_stored_cells(name, self.stored_cells)
+        budget.check_stored_cells(name, self.stored_cells)?;
+        budget.spend(name, self.rows, self.columns)
     }
 }
 

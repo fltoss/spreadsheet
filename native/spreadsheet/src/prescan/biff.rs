@@ -47,6 +47,9 @@ impl<'a> Iterator for Records<'a> {
 }
 
 pub fn scan_workbook(stream: &[u8], budget: &Budget) -> Scan<()> {
+    // calamine decodes every sheet when it opens the file, so all of them
+    // count against the budget, even when only one sheet is parsed.
+    let mut budget = *budget;
     let mut sheets = Vec::new();
     let mut biff8 = true;
 
@@ -106,7 +109,7 @@ pub fn scan_workbook(stream: &[u8], budget: &Budget) -> Scan<()> {
                 "sheet {name:?} starts past the end of the workbook"
             )));
         };
-        match scan_sheet(sheet_stream, &name, budget)? {
+        match scan_sheet(sheet_stream, &name, &mut budget)? {
             Some(()) => (),
             None => return Ok(None),
         }
@@ -127,7 +130,7 @@ impl Extent {
     }
 }
 
-fn scan_sheet(stream: &[u8], name: &str, budget: &Budget) -> Scan<()> {
+fn scan_sheet(stream: &[u8], name: &str, budget: &mut Budget) -> Scan<()> {
     let mut dimension_error = None;
     let extent = match sheet_extent(stream, name, &mut dimension_error) {
         Some(extent) => extent,
@@ -136,7 +139,7 @@ fn scan_sheet(stream: &[u8], name: &str, budget: &Budget) -> Scan<()> {
         None => return dimension_error.map_or(Ok(None), Err),
     };
     if let Some((last_row, last_column)) = extent.last {
-        budget.check_rectangle(name, u64::from(last_row) + 1, u64::from(last_column) + 1)?;
+        budget.spend(name, u64::from(last_row) + 1, u64::from(last_column) + 1)?;
     }
     // Report the cells first: they are what the caller can act on.
     dimension_error.map_or(Ok(Some(())), Err)

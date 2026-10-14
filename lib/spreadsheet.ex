@@ -8,7 +8,7 @@ defmodule Spreadsheet do
 
   alias Spreadsheet.Calamine
 
-  @default_max_cells 10_000_000
+  @default_max_cells 50_000_000
 
   # Accepted by both `parse/2` and `sheet_names/2`, so one options list can
   # be passed to either (`sheet_names/2` ignores `:sheet`).
@@ -46,10 +46,11 @@ defmodule Spreadsheet do
       Defaults to `true` (`nil` also means the default).
     * `:sheet` - accepted and ignored, so the same options can be passed to
       `parse/2` and `sheet_names/2`.
-    * `:max_cells` - the largest sheet accepted, as rows × columns counted from
-      A1, or `:infinity`. Defaults to `#{@default_max_cells}`. Listing sheets
-      only reads cells for .xls and .ods files, which are decoded in full when
-      opened, so only those can exceed it here.
+    * `:max_cells` - the cell budget of the call, or `:infinity`. Defaults to
+      `#{@default_max_cells}`. Listing sheets only reads cells for .xls and
+      .ods files, which are decoded in full when opened: every sheet's rows ×
+      columns, counted from A1, must fit in the budget together. Other
+      formats are not affected here. See `parse/2`.
 
   Returns `{:error, reason}` when the file cannot be read or parsed, and
   raises `ArgumentError` for unknown or invalid options. With duplicate
@@ -105,12 +106,16 @@ defmodule Spreadsheet do
       all-sheets parsing. Defaults to `true` (`nil` also means the default).
       Ignored, and not validated, when `:sheet` is given: naming a sheet
       always parses it.
-    * `:max_cells` - the largest sheet accepted, as rows × columns counted from
-      A1, or `:infinity`. Defaults to `#{@default_max_cells}`. Larger sheets
-      return an error before they are expanded.
+    * `:max_cells` - the cell budget of the call, or `:infinity`. Defaults to
+      `#{@default_max_cells}`. Each sheet parsed costs its rows × columns,
+      counted from A1, and the sheets of one call must fit in the budget
+      together (1,048,576 rows × 47 columns fits the default). A sheet that
+      does not fit returns an error before it is expanded. .xls and .ods
+      files are decoded in full when opened, so for them every sheet of the
+      workbook counts, even when one sheet is requested.
 
   Returns `{:error, reason}` when the file cannot be read or parsed, the sheet
-  does not exist or a sheet exceeds `:max_cells`, and raises `ArgumentError`
+  does not exist or the sheets exceed `:max_cells`, and raises `ArgumentError`
   for unknown or invalid options. With duplicate options, the first one wins.
 
   ## Examples
@@ -141,7 +146,7 @@ defmodule Spreadsheet do
       {:ok, [{"Q1 Data", [...]}, {"Q2 Data", [...]}]}
 
       # Allow a larger sheet
-      Spreadsheet.parse("big.xlsx", sheet: "Data", max_cells: 50_000_000)
+      Spreadsheet.parse("big.xlsx", sheet: "Data", max_cells: 100_000_000)
       {:ok, [[...]]}
 
   """

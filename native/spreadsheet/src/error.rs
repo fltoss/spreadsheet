@@ -27,18 +27,37 @@ pub enum Error {
     /// calamine could not read the file, worded as calamine words it.
     Calamine(calamine::Error),
     SheetNotFound(String),
-    /// A sheet's rectangle (rows × columns from A1) exceeds `:max_cells`.
+    /// A sheet's rectangle (rows × columns from A1) does not fit in what is
+    /// left of the `:max_cells` budget after `used` cells of earlier sheets.
     TooManyCells {
         sheet: String,
         rows: u64,
         columns: u64,
+        used: u64,
         maximum: u64,
     },
-    /// An .ods table makes calamine store more cells than `:max_cells`.
+    /// A sheet has more cell records than the `:max_cells` budget has left.
+    TooManyCellRecords {
+        sheet: String,
+        count: u64,
+        used: u64,
+        maximum: u64,
+    },
+    /// An .ods table makes calamine store more cells than the `:max_cells`
+    /// budget has left.
     TooManyStoredCells {
         sheet: String,
         count: u128,
+        used: u64,
         maximum: u64,
+    },
+    /// An .xlsx or .xlsb sheet repeats cell positions far beyond its
+    /// rectangle, which only a malformed file does.
+    RepeatedCells {
+        sheet: String,
+        count: u64,
+        rows: u64,
+        columns: u64,
     },
     /// A malformed .xls file that would make calamine allocate without bound
     /// or loop forever.
@@ -73,20 +92,43 @@ impl fmt::Display for Error {
                 sheet,
                 rows,
                 columns,
+                used,
                 maximum,
             } => write!(
                 formatter,
-                "sheet {sheet:?} has {rows} rows × {columns} columns ({cells} cells), \
-                 above the :max_cells limit of {maximum}",
-                cells = u128::from(*rows) * u128::from(*columns)
+                "sheet {sheet:?} has {rows} rows × {columns} columns ({cells} cells), {limit}",
+                cells = u128::from(*rows) * u128::from(*columns),
+                limit = Limit(*used, *maximum)
+            ),
+            Error::TooManyCellRecords {
+                sheet,
+                count,
+                used,
+                maximum,
+            } => write!(
+                formatter,
+                "sheet {sheet:?} has {count} cell records, {limit}",
+                limit = Limit(*used, *maximum)
             ),
             Error::TooManyStoredCells {
                 sheet,
                 count,
+                used,
                 maximum,
             } => write!(
                 formatter,
-                "sheet {sheet:?} stores {count} cells, above the :max_cells limit of {maximum}"
+                "sheet {sheet:?} stores {count} cells, {limit}",
+                limit = Limit(*used, *maximum)
+            ),
+            Error::RepeatedCells {
+                sheet,
+                count,
+                rows,
+                columns,
+            } => write!(
+                formatter,
+                "invalid sheet {sheet:?}: {count} cell records repeat positions within \
+                 {rows} rows × {columns} columns"
             ),
             Error::InvalidXls(reason) => write!(formatter, "invalid .xls file: {reason}"),
             Error::InvalidOds(reason) => write!(formatter, "invalid .ods file: {reason}"),
@@ -98,5 +140,24 @@ impl fmt::Display for Error {
 impl From<calamine::Error> for Error {
     fn from(error: calamine::Error) -> Self {
         Error::Calamine(error)
+    }
+}
+
+/// "above the :max_cells limit of M", naming what earlier sheets used.
+struct Limit(u64, u64);
+
+impl fmt::Display for Limit {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Limit(used, maximum) = *self;
+        if used == 0 {
+            write!(formatter, "above the :max_cells limit of {maximum}")
+        } else {
+            write!(
+                formatter,
+                "above the {left} cells left of the :max_cells limit of {maximum} \
+                 after {used} cells in earlier sheets",
+                left = maximum.saturating_sub(used)
+            )
+        }
     }
 }

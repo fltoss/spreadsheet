@@ -11,7 +11,7 @@ A fast Elixir library for reading spreadsheet files, powered by Rust and [Calami
 - 💾 **Paths or Binaries** - Parse from a file path or from content already in memory
 - 🗂️ **Sheet Management** - List and filter sheet names, including hidden sheets
 - 📅 **Consistent Types** - Numbers are floats, dates are `NaiveDateTime`, times are `Time`, durations are `Duration`, in every format
-- 🛡️ **Bounded Memory** - A per-sheet `:max_cells` limit rejects sparse or crafted files before they are expanded
+- 🛡️ **Bounded Memory** - A per-call `:max_cells` budget rejects sparse or crafted files before they are expanded
 - 🔧 **Simple API** - `{:ok, result} | {:error, reason}` for anything wrong with the file
 
 ## Usage
@@ -90,7 +90,7 @@ iex> Spreadsheet.parse(content, sheet: "Q1 Data", format: :binary)
 | `:format`    | `parse/2`, `sheet_names/2` | `:filename`  | `:filename` (the first argument is a path) or `:binary` (it is the file's content). |
 | `:hidden`    | `parse/2`, `sheet_names/2` | `true`       | When `false`, hidden and very hidden sheets are skipped. `nil` means the default. Ignored by `parse/2` when `:sheet` is given. |
 | `:sheet`     | `parse/2`                  | `nil`        | Name of the sheet to parse. `nil` parses every sheet. `sheet_names/2` accepts and ignores it, so one options list works for both. |
-| `:max_cells` | `parse/2`, `sheet_names/2` | `10_000_000` | Largest sheet accepted, as rows × columns counted from A1. `:infinity` disables the limit. |
+| `:max_cells` | `parse/2`, `sheet_names/2` | `50_000_000` | Cell budget of the call: the rows × columns (from A1) of every sheet built, summed. `:infinity` disables it. See "Limiting Memory" below. |
 
 ### Rows Are Anchored at A1
 
@@ -156,8 +156,8 @@ wrong with the input file:
   (the message suggests `format: :binary`), or vice versa;
 - the content is not a supported spreadsheet, or calamine cannot parse it;
 - the requested sheet does not exist (`"sheet \"Q3\" not found"`);
-- a sheet exceeds `:max_cells`, or an .xls file is malformed in a way that would
-  make the parser allocate without bound;
+- the sheets exceed `:max_cells`, or an .xls or .ods file is malformed in a way
+  that would make the parser allocate without bound or loop forever;
 - `:format` is neither `:filename` nor `:binary` (kept as an error tuple for
   backwards compatibility).
 
@@ -166,28 +166,45 @@ that is not a string or `nil`, a `:hidden` that is not a boolean or `nil` (only
 checked when it is used), or a `:max_cells` that is not a positive integer or
 `:infinity`. Duplicate options do not raise: the first one wins.
 
-### Limiting Sheet Size
+### Limiting Memory with `:max_cells`
 
-A sheet's rows are fully built in memory, and padding to A1 means a single cell
-in `XFD1048576` produces a 1,048,576 × 16,384 rectangle. `:max_cells` (default
-10 million) rejects such sheets with an error before anything is allocated:
+Rows are fully built in memory, and padding to A1 means a single cell in
+`XFD1048576` produces a 1,048,576 × 16,384 rectangle. `:max_cells` is a cell
+budget for one call: every sheet the call builds costs its rows × columns,
+counted from A1, and a sheet that does not fit in what is left returns an error
+before anything is allocated for it. The default of 50 million fits, for
+example, one sheet of 1,048,576 rows × 47 columns, or 500,000 rows × 100
+columns:
 
 ```elixir
 iex> Spreadsheet.parse("sparse.xlsx")
-{:error, "sheet \"Data\" has 200000 rows × 16384 columns (3276800000 cells), above the :max_cells limit of 10000000"}
+{:error, "sheet \"Data\" has 200000 rows × 16384 columns (3276800000 cells), above the :max_cells limit of 50000000"}
 
-iex> Spreadsheet.parse("big.xlsx", max_cells: 50_000_000)
+iex> Spreadsheet.parse("big.xlsx", max_cells: 100_000_000)
 {:ok, [...]}
 ```
 
-The limit applies per sheet, to rows × columns counted from A1. For .xlsx and
-.xlsb it is checked against the actual cells (the file's declared dimensions are
-ignored). .xls and .ods workbooks are decoded in full when they are opened, so
-they are scanned before decoding and the limit also applies to `sheet_names/2`
-and to every sheet, not just the one requested; for those formats it also bounds
-cells the file declares or repeats (`table:number-columns-repeated`, an .xls
-DIMENSIONS record) and rejects malformed .xls containers. Only raise or disable
-the limit for files you trust.
+As a guide, each cell of the result takes about 17 bytes when it is `nil`,
+33 bytes for a float and 57 bytes for typical mixed data (short strings, dates,
+floats), so the default allows a result of roughly 1–3 GB. Lower it for
+untrusted uploads.
+
+- **.xlsx and .xlsb** sheets are checked against their actual cells while they
+  are read (the file's declared dimensions are ignored). A sheet that repeats
+  cell positions far beyond its rectangle is rejected as malformed, whatever
+  the limit.
+- **.xls and .ods** workbooks are decoded in full when they are opened, so they
+  are scanned before decoding and every sheet of the workbook counts against
+  the budget, even when you parse one sheet or only call `sheet_names/2`. For
+  .ods the budget also bounds the cells repeat attributes expand to
+  (`table:number-columns-repeated`).
+- **Malformed files** are rejected whatever the limit, including with
+  `max_cells: :infinity`: .xls compound file headers or sector chains that would
+  make the parser allocate without bound or loop forever, .xls DIMENSIONS
+  records beyond 65,536 rows × 256 columns, and .ods `<text:s>` space runs
+  above 100 million spaces per workbook.
+
+Only raise or disable the limit for files you trust.
 
 ### Known Limitations
 

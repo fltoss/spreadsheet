@@ -548,6 +548,16 @@ Fixtures.Xlsx.write!(fixture.("sparse.xlsx"), [
    rows: [{1, [{"A1", :number, 1}]}, {200_000, [{"XFD200000", :number, 2}]}]}
 ])
 
+# Repeated cell positions: a single repeat is tolerated (the last cell wins,
+# as in calamine), while more records than twice the rectangle is a malformed
+# file (millions of them would otherwise be collected).
+Fixtures.Xlsx.write!(fixture.("repeated_cells.xlsx"), [
+  {"Once",
+   rows: [{1, [{"A1", :number, 1}, {"B1", :number, 2}, {"A1", :number, 3}]}]},
+  {"Many",
+   rows: [{1, [{"A1", :number, 1}, {"A1", :number, 2}, {"A1", :number, 3}]}]}
+])
+
 # .xlsb: zero-based {row, column, kind, value, style}.
 xlsb_types = [
   {0, 0, :shared_string, 0, 0},

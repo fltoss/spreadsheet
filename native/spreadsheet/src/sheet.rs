@@ -2,13 +2,14 @@
 //! spreadsheet row 1 and column 0 is column A, whatever cell the data starts
 //! in. Leading empty rows and columns are padded with `nil`.
 //!
-//! The output rectangle is checked against `:max_cells` before it is built.
+//! Each sheet's rectangle is spent from the `:max_cells` budget before it is
+//! built.
 
 use crate::budget::Budget;
 use crate::cell::ToCellValue;
 use crate::encode::encode_cell;
 use crate::error::Error;
-use crate::format::{self, SheetCells};
+use crate::format::{self, SheetCells, SparseCells};
 use crate::workbook::Workbook;
 use calamine::{Cell, Data, DataRef, Range};
 use rustler::{Encoder, Env, Term};
@@ -18,11 +19,11 @@ pub fn read_sheet<'a>(
     env: Env<'a>,
     workbook: &mut Workbook,
     name: &str,
-    budget: &Budget,
+    budget: &mut Budget,
 ) -> Result<Term<'a>, Error> {
-    match format::read_cells(workbook, name)? {
+    match format::read_cells(workbook, name, budget)? {
         SheetCells::Empty => Ok(empty_list(env)),
-        SheetCells::Sparse(cells) => encode_cells(env, name, cells, budget),
+        SheetCells::Sparse(sparse) => encode_cells(env, name, sparse, budget),
         SheetCells::Range(range) => encode_range(env, name, &range, budget),
     }
 }
@@ -31,33 +32,32 @@ fn empty_list(env: Env) -> Term {
     Vec::<Term>::new().encode(env)
 }
 
-/// Encodes sparse cells (.xlsx, .xlsb) once their rectangle passes the limit.
+/// Encodes sparse cells (.xlsx, .xlsb).
 fn encode_cells<'a>(
     env: Env<'a>,
     name: &str,
-    mut cells: Vec<Cell<DataRef<'_>>>,
-    budget: &Budget,
+    sparse: SparseCells<'_>,
+    budget: &mut Budget,
 ) -> Result<Term<'a>, Error> {
-    let Some((last_row, last_column)) = cells.iter().fold(None, |extent, cell| {
-        let (row, column) = cell.get_position();
-        let (last_row, last_column) = extent.unwrap_or((0, 0));
-        Some((last_row.max(row), last_column.max(column)))
-    }) else {
-        return Ok(empty_list(env));
-    };
-    let rows = u64::from(last_row) + 1;
-    let columns = u64::from(last_column) + 1;
-    budget.check_rectangle(name, rows, columns)?;
+    let SparseCells {
+        mut cells,
+        rows,
+        columns,
+        sorted,
+    } = sparse;
+    budget.spend(name, rows, columns)?;
 
     // Readers yield cells in file order, which is normally row-major but not
     // guaranteed. A stable sort keeps the last of duplicate cells last, and
     // the last one wins, as in calamine's `Range::from_sparse`.
-    cells.sort_by_key(|cell| cell.get_position());
+    if !sorted {
+        cells.sort_by_key(|cell| cell.get_position());
+    }
 
     let mut encoder = RowEncoder::new(env, columns as usize);
     let mut encoded = Vec::with_capacity(rows as usize);
     let mut remaining = cells.as_slice();
-    for row in 0..=last_row {
+    for row in 0..rows as u32 {
         let count = remaining
             .iter()
             .take_while(|cell| cell.get_position().0 == row)
@@ -78,14 +78,14 @@ fn encode_range<'a>(
     env: Env<'a>,
     name: &str,
     range: &Range<Data>,
-    budget: &Budget,
+    budget: &mut Budget,
 ) -> Result<Term<'a>, Error> {
     let (Some(start), Some(end)) = (range.start(), range.end()) else {
         return Ok(empty_list(env));
     };
     let rows = u64::from(end.0) + 1;
     let columns = u64::from(end.1) + 1;
-    budget.check_rectangle(name, rows, columns)?;
+    budget.spend(name, rows, columns)?;
 
     let mut encoder = RowEncoder::new(env, columns as usize);
     let mut encoded = Vec::with_capacity(rows as usize);
