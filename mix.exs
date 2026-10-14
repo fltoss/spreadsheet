@@ -2,7 +2,7 @@ defmodule Spreadsheet.MixProject do
   use Mix.Project
 
   @github_url "https://github.com/fltoss/spreadsheet"
-  @version "0.6.3"
+  @version "0.6.4"
 
   def project do
     [
@@ -29,7 +29,7 @@ defmodule Spreadsheet.MixProject do
       {:decimal, "~> 2.0 or ~> 3.0"},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
       {:igniter, "~> 0.5", only: [:dev, :test]},
-      {:credo, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:credo, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 

@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-10-14
+
+No breaking changes: the public API, supported Elixir requirement (`~> 1.18`)
+and all runtime `mix.exs` constraints are unchanged. Dependency updates only.
+
+### Added
+- Legacy `.xls` files declaring code page 10007 (Mac Cyrillic) or 21010
+  (UTF-16LE) now open; previously calamine failed with "Codepage … not found"
+  (`codepage` 0.1.2 → 0.1.3).
+
+### Updated
+- Updated Rust dependencies:
+  - `encoding_rs` 0.8.35 → 0.8.42: rewritten ASCII fast path, UTF-8 validation
+    via `simdutf8`, and a fix for a boundary bug in streaming legacy decoders
+    (calamine uses the non-streaming API, so results are unchanged). Pulls in
+    four new crates: `simdutf8`, `scopeguard`, `core_detect` and
+    `multiversion_no_op`.
+  - `flate2` 1.1.9 → 1.1.10: a stream truncated at end-of-file is now an error
+    instead of a silent short read, plus an infinite-loop fix in gzip header
+    writing. Drops `miniz_oxide` and `adler2` from the lockfile.
+  - flate2 1.1.10 moved zlib-rs runtime CPU feature detection (SIMD) behind a
+    new default feature, which `zip` disables. `flate2` is now listed directly
+    in `Cargo.toml` with `runtime_detection` enabled, so decompression keeps
+    using SIMD. The backend is still zlib-rs.
+  - Transitive: `cc`, `cfg-if`, `crc32fast`, `equivalent`, `find-msvc-tools`,
+    `indexmap`, `inventory`, `js-sys`, `libc`, `syn`, `unicode-ident`,
+    `wasm-bindgen` (+ macro crates), `zlib-rs`, `zopfli`.
+  - `rustler` stays on 0.38.0: crate 0.39.0 is out, but the hex package is
+    still 0.38.0 and the two must match.
+  - Verified parsing is unaffected: every fixture in `test/files` (`.ods`,
+    `.xls`, `.xlsx` and both hidden-sheet variants) was parsed before and
+    after the update via `sheet_names/2`, `sheet_names_from_binary/2`,
+    `parse/2` and `parse_from_binary/2`, producing identical results.
+- Tested against `rustler_precompiled` 0.10.0, which the existing `~> 0.8`
+  constraint already allows (adds NIF 2.18 / OTP 29 support; the options this
+  library passes and the checksum file format are unchanged).
+- Tested against `decimal` 3.2.0.
+- Updated Elixir dev/test dependencies: `ex_doc` 0.40.4, `igniter` 0.8.4, and
+  their transitives (`ex_ast`, `finch`, `hpax`, `makeup`, `mint`, `req`,
+  `sourceror`, `spitfire`). Dropped the stale `inflex` and `toml` lock
+  entries, which no environment resolved.
+
+### Removed
+- Dropped the unused `dialyxir` dev/test dependency.
+
+### Internal
+- CI actions updated to their current major versions.
+
 ## [0.6.3] - 2026-08-25
 
 No breaking changes: the public API, supported Elixir requirement (`~> 1.18`)
