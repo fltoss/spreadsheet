@@ -10,6 +10,10 @@
 //! When a file is not something calamine would open (wrong container,
 //! truncated records, ...) the scans step aside and let calamine report its
 //! own error.
+//!
+//! The structural checks (container loops and sizes, forged DIMENSIONS
+//! records, `<text:s>` space runs) always run; only the cell counts depend
+//! on `:max_cells`, so `max_cells: :infinity` still rejects malformed files.
 
 mod biff;
 mod cfb;
@@ -24,12 +28,10 @@ pub use ods::check as ods;
 /// `Ok(None)` means "not applicable": calamine will reject the file itself.
 type Scan<T> = Result<Option<T>, Error>;
 
-/// Rejects .xls files whose compound file container or sheets would make
-/// calamine allocate without bound or loop forever.
+/// Rejects .xls files whose compound file container or DIMENSIONS records
+/// would make calamine allocate without bound or loop forever (always), or
+/// whose sheets exceed the `:max_cells` budget.
 pub fn xls<RS: Read + Seek + ?Sized>(reader: &mut RS, budget: &Budget) -> Result<(), Error> {
-    if budget.is_unlimited() {
-        return Ok(());
-    }
     let result = cfb::workbook_stream(reader).and_then(|stream| match stream {
         Some(stream) => biff::scan_workbook(&stream, budget),
         None => Ok(None),

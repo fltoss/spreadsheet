@@ -50,17 +50,36 @@ defmodule Spreadsheet.MaxCellsTest do
                {:error, message}
     end
 
-    test ".xls: a forged DIMENSIONS record" do
-      assert {:error, message} = Spreadsheet.parse(fixture("dimension.xls"))
+    test ".xls: a forged DIMENSIONS record, whatever :max_cells is" do
+      message =
+        ~s|invalid .xls file: sheet "Sheet1" declares 4294967295 rows × 255 columns | <>
+          "in its DIMENSIONS record, above the .xls maximum of 65536 rows × 256 columns"
 
-      assert message =~
-               ~s|sheet "Sheet1" declares 4294967295 rows × 255 columns in its DIMENSIONS record|
+      for max_cells <- [10_000_000, :infinity] do
+        assert Spreadsheet.parse(fixture("dimension.xls"), max_cells: max_cells) ==
+                 {:error, message}
+      end
     end
 
-    test ".xls: a forged compound file header" do
-      assert Spreadsheet.parse(fixture("fat_length.xls")) ==
-               {:error,
-                "invalid .xls file: the header declares 4294967295 FAT sectors but the file has 11"}
+    test ".xls: declared dimensions within .xls limits do not count" do
+      # A1:IV50000 declared (12.8 million cells), two values in A1 and B2.
+      rows = [[1.0, nil], [nil, 7.0]]
+
+      assert Spreadsheet.parse(fixture("template.xls")) ==
+               {:ok, [{"Sheet1", rows}]}
+
+      assert Spreadsheet.parse(fixture("template.xls"), max_cells: 4) ==
+               {:ok, [{"Sheet1", rows}]}
+    end
+
+    test ".xls: a forged compound file header, whatever :max_cells is" do
+      for max_cells <- [10_000_000, :infinity] do
+        assert Spreadsheet.parse(fixture("fat_length.xls"),
+                 max_cells: max_cells
+               ) ==
+                 {:error,
+                  "invalid .xls file: the header declares 4294967295 FAT sectors but the file has 11"}
+      end
     end
 
     test ".ods: values in A1 and XFD1048576" do

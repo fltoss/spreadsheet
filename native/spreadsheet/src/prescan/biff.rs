@@ -129,7 +129,7 @@ impl Extent {
 
 fn scan_sheet(stream: &[u8], name: &str, budget: &Budget) -> Scan<()> {
     let mut dimension_error = None;
-    let extent = match sheet_extent(stream, name, budget, &mut dimension_error) {
+    let extent = match sheet_extent(stream, name, &mut dimension_error) {
         Some(extent) => extent,
         // calamine fails on this sheet, but only after reserving what the
         // DIMENSIONS record asked for.
@@ -144,12 +144,7 @@ fn scan_sheet(stream: &[u8], name: &str, budget: &Budget) -> Scan<()> {
 
 /// The largest cell position in a sheet substream, or `None` when calamine
 /// would fail on a record.
-fn sheet_extent(
-    stream: &[u8],
-    name: &str,
-    budget: &Budget,
-    dimension_error: &mut Option<Error>,
-) -> Option<Extent> {
+fn sheet_extent(stream: &[u8], name: &str, dimension_error: &mut Option<Error>) -> Option<Extent> {
     let mut extent = Extent::default();
     let position = |data: &[u8]| (u32::from(read_u16(data, 0)), u32::from(read_u16(data, 2)));
 
@@ -157,7 +152,7 @@ fn sheet_extent(
         let (record_type, data) = record.ok()?;
         let minimum_length = match record_type {
             0x0200 => {
-                if let Err(message) = check_dimensions(data, name, budget)? {
+                if let Err(message) = check_dimensions(data, name)? {
                     dimension_error.get_or_insert(message);
                 }
                 continue;
@@ -203,10 +198,17 @@ fn sheet_extent(
     Some(extent)
 }
 
+/// The largest sheet an .xls (BIFF8) file can describe.
+const MAX_ROWS: u32 = 65_536;
+const MAX_COLUMNS: u32 = 256;
+
 /// calamine reserves `rows × columns` cells from the DIMENSIONS record
-/// before reading any cell; reproduce its arithmetic (including wrapping).
-/// `None` when calamine rejects the record.
-fn check_dimensions(data: &[u8], name: &str, budget: &Budget) -> Option<Result<(), Error>> {
+/// before reading any cell. Reproduce its arithmetic (including wrapping) and
+/// reject sizes no .xls file can have. This is a structural check, independent
+/// of `:max_cells`: a formatting-only template may legitimately declare
+/// `A1:IV65536` and hold a handful of values. `None` when calamine rejects the
+/// record.
+fn check_dimensions(data: &[u8], name: &str) -> Option<Result<(), Error>> {
     let (first_row, last_row, mut first_column, last_column) = match data.len() {
         10 => (
             u32::from(read_u16(data, 0)),
@@ -232,12 +234,13 @@ fn check_dimensions(data: &[u8], name: &str, budget: &Budget) -> Option<Result<(
     };
     let rows = end.0.wrapping_sub(start.0).wrapping_add(1);
     let columns = end.1.wrapping_sub(start.1).wrapping_add(1);
-    let cells = (rows as usize).saturating_mul(columns as usize) as u128;
-    Some(budget.check_count(
-        name,
-        cells,
-        &format!("declares {rows} rows × {columns} columns in its DIMENSIONS record:"),
-    ))
+    if rows > MAX_ROWS || columns > MAX_COLUMNS {
+        return Some(Err(invalid(&format!(
+            "sheet {name:?} declares {rows} rows × {columns} columns in its DIMENSIONS \
+             record, above the .xls maximum of {MAX_ROWS} rows × {MAX_COLUMNS} columns"
+        ))));
+    }
+    Some(Ok(()))
 }
 
 /// Best-effort sheet name for error messages (`ShortXLUnicodeString`).
@@ -342,17 +345,42 @@ mod tests {
         assert!(scan_workbook(&stream, &Budget::new(Some(4))).is_err());
     }
 
+    /// A BIFF8 DIMENSIONS record: rows `first..last` (exclusive) and columns
+    /// `first..last` (exclusive).
+    fn dimensions(first_row: u32, last_row: u32, first_column: u16, last_column: u16) -> Vec<u8> {
+        let mut data = first_row.to_le_bytes().to_vec();
+        data.extend_from_slice(&last_row.to_le_bytes());
+        data.extend_from_slice(&first_column.to_le_bytes());
+        data.extend_from_slice(&last_column.to_le_bytes());
+        data.extend_from_slice(&0u16.to_le_bytes());
+        record(0x0200, &data)
+    }
+
     #[test]
-    fn declared_dimensions_are_checked() {
-        let mut data = 0u32.to_le_bytes().to_vec();
-        data.extend_from_slice(&u32::MAX.to_le_bytes());
-        data.extend_from_slice(&0u16.to_le_bytes());
-        data.extend_from_slice(&255u16.to_le_bytes());
-        data.extend_from_slice(&0u16.to_le_bytes());
-        let stream = workbook(&[record(0x0200, &data)]);
-        let error = scan_workbook(&stream, &Budget::new(Some(10_000_000))).unwrap_err();
-        assert!(error.to_string().starts_with(
-            "sheet \"S\" declares 4294967295 rows × 255 columns in its DIMENSIONS record:"
+    fn forged_dimensions_are_rejected_without_a_limit() {
+        let stream = workbook(&[dimensions(0, u32::MAX, 0, 255)]);
+        let error = scan_workbook(&stream, &Budget::new(None)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "invalid .xls file: sheet \"S\" declares 4294967295 rows × 255 columns in its \
+             DIMENSIONS record, above the .xls maximum of 65536 rows × 256 columns"
+        );
+        // last row before first row wraps around in calamine.
+        let stream = workbook(&[dimensions(10, 5, 0, 1)]);
+        assert!(scan_workbook(&stream, &Budget::new(None)).is_err());
+    }
+
+    #[test]
+    fn declared_dimensions_do_not_count_against_the_limit() {
+        // A formatting-only template: A1:IV65536 declared, two values.
+        let stream = workbook(&[
+            dimensions(0, 65_536, 0, 256),
+            cell(0x0203, 0, 0, 14),
+            cell(0x027E, 1, 1, 10),
+        ]);
+        assert!(matches!(
+            scan_workbook(&stream, &Budget::new(Some(4))),
+            Ok(Some(()))
         ));
     }
 

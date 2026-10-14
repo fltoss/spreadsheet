@@ -34,17 +34,17 @@ pub enum Error {
         columns: u64,
         maximum: u64,
     },
-    /// A file makes the parser allocate more than `:max_cells` cells (or
-    /// characters), described by `what`.
-    TooManyAllocated {
+    /// An .ods table makes calamine store more cells than `:max_cells`.
+    TooManyStoredCells {
         sheet: String,
-        what: String,
         count: u128,
         maximum: u64,
     },
     /// A malformed .xls file that would make calamine allocate without bound
     /// or loop forever.
     InvalidXls(String),
+    /// An .ods file that would make calamine allocate without bound.
+    InvalidOds(String),
     /// calamine panicked.
     Panic(String),
 }
@@ -80,16 +80,16 @@ impl fmt::Display for Error {
                  above the :max_cells limit of {maximum}",
                 cells = u128::from(*rows) * u128::from(*columns)
             ),
-            Error::TooManyAllocated {
+            Error::TooManyStoredCells {
                 sheet,
-                what,
                 count,
                 maximum,
             } => write!(
                 formatter,
-                "sheet {sheet:?} {what} {count} cells, above the :max_cells limit of {maximum}"
+                "sheet {sheet:?} stores {count} cells, above the :max_cells limit of {maximum}"
             ),
             Error::InvalidXls(reason) => write!(formatter, "invalid .xls file: {reason}"),
+            Error::InvalidOds(reason) => write!(formatter, "invalid .ods file: {reason}"),
             Error::Panic(message) => write!(formatter, "could not read workbook: {message}"),
         }
     }

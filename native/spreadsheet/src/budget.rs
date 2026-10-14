@@ -14,10 +14,6 @@ impl Budget {
         Budget { maximum }
     }
 
-    pub fn is_unlimited(&self) -> bool {
-        self.maximum.is_none()
-    }
-
     /// Checks a `rows × columns` rectangle.
     pub fn check_rectangle(&self, sheet: &str, rows: u64, columns: u64) -> Result<(), Error> {
         let cells = u128::from(rows) * u128::from(columns);
@@ -32,13 +28,11 @@ impl Budget {
         }
     }
 
-    /// Checks a count of cells (or characters) a file makes the parser
-    /// allocate, described by `what`.
-    pub fn check_count(&self, sheet: &str, count: u128, what: &str) -> Result<(), Error> {
+    /// Checks the cells an .ods table makes calamine store while reading it.
+    pub fn check_stored_cells(&self, sheet: &str, count: u128) -> Result<(), Error> {
         match self.maximum {
-            Some(maximum) if count > u128::from(maximum) => Err(Error::TooManyAllocated {
+            Some(maximum) if count > u128::from(maximum) => Err(Error::TooManyStoredCells {
                 sheet: sheet.to_string(),
-                what: what.to_string(),
                 count,
                 maximum,
             }),

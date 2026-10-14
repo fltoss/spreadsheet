@@ -8,12 +8,14 @@
 //! returned, and `<text:s text:c="…"/>` expands to that many spaces.
 //!
 //! This module streams `content.xml` the way calamine 0.36 reads it and
-//! rejects the workbook when a table would need more than `:max_cells`:
+//! rejects the workbook when:
 //!
-//! - output rectangle: rows × columns counted from A1 up to the last
-//!   non-empty cell, with repeats expanded;
-//! - stored cells: the cells calamine materialises while reading rows;
-//! - repeated spaces from `<text:s>` across the table.
+//! - a table's output rectangle (rows × columns counted from A1 up to the last
+//!   non-empty cell, with repeats expanded) or the cells calamine stores while
+//!   reading its rows exceed the `:max_cells` budget;
+//! - `<text:s>` elements expand to more than [`MAX_SPACES`] spaces across the
+//!   workbook, repeats included. This is independent of `:max_cells`, which
+//!   counts cells, not characters.
 //!
 //! Anything calamine would fail on by itself is left to calamine.
 
@@ -29,6 +31,10 @@ const MAX_ROWS: u64 = 1_048_576;
 /// calamine caps columns at Excel's maximum.
 const MAX_COLUMNS: u64 = 16_384;
 
+/// The most spaces `<text:s>` elements may expand to in one workbook (100 MB
+/// of text). Real files use a few spaces per cell.
+pub const MAX_SPACES: u128 = 100_000_000;
+
 const VALUE_ATTRIBUTES: [&[u8]; 5] = [
     b"office:value",
     b"office:string-value",
@@ -38,10 +44,8 @@ const VALUE_ATTRIBUTES: [&[u8]; 5] = [
 ];
 
 pub fn check<RS: Read + Seek + ?Sized>(reader: &mut RS, budget: &Budget) -> Result<(), Error> {
-    if budget.is_unlimited() {
-        return Ok(());
-    }
     let result = scan(reader, budget);
+    // calamine expects to start reading from the beginning.
     let _ = reader.seek(SeekFrom::Start(0));
     result
 }
@@ -53,13 +57,19 @@ fn scan<RS: Read + Seek + ?Sized>(reader: &mut RS, budget: &Budget) -> Result<()
     let Ok(content) = archive.by_name("content.xml") else {
         return Ok(());
     };
-    let mut xml = Reader::from_reader(BufReader::new(content));
+    scan_content(BufReader::new(content), budget)
+}
+
+/// Scans `content.xml`.
+fn scan_content<R: BufRead>(content: R, budget: &Budget) -> Result<(), Error> {
+    let mut xml = Reader::from_reader(content);
     let config = xml.config_mut();
     config.check_end_names = false;
     config.trim_text(false);
     config.check_comments = false;
     config.expand_empty_elements = true;
 
+    let mut spaces: u128 = 0;
     let mut buffer = Vec::with_capacity(1024);
     loop {
         buffer.clear();
@@ -69,9 +79,16 @@ fn scan<RS: Read + Seek + ?Sized>(reader: &mut RS, budget: &Budget) -> Result<()
                     continue;
                 };
                 let name = String::from_utf8_lossy(&name).into_owned();
-                match scan_table(&mut xml)? {
-                    Some(table) => table.check(&name, budget)?,
-                    None => return Ok(()),
+                let Some(table) = scan_table(&mut xml)? else {
+                    return Ok(());
+                };
+                table.check(&name, budget)?;
+                spaces += table.spaces;
+                if spaces > MAX_SPACES {
+                    return Err(Error::InvalidOds(format!(
+                        "<text:s> elements expand to more than {MAX_SPACES} spaces \
+                         (reached in sheet {name:?})"
+                    )));
                 }
             }
             Ok(Event::Eof) | Err(_) => return Ok(()),
@@ -112,12 +129,7 @@ struct Table {
 impl Table {
     fn check(&self, name: &str, budget: &Budget) -> Result<(), Error> {
         budget.check_rectangle(name, self.rows, self.columns)?;
-        budget.check_count(name, self.stored_cells, "stores")?;
-        budget.check_count(
-            name,
-            self.spaces,
-            "expands <text:s> elements to the size of",
-        )
+        budget.check_stored_cells(name, self.stored_cells)
     }
 }
 
@@ -300,6 +312,25 @@ mod tests {
                     table:number-columns-repeated=\"4\"><text:p>a<text:s text:c=\"1000\"/>b</text:p>\
                     </table:table-cell></table:table-row>";
         assert_eq!(table(rows).spaces, 4000);
-        assert!(table(rows).check("T", &Budget::new(Some(3999))).is_err());
+    }
+
+    #[test]
+    fn space_runs_are_capped_without_a_limit() {
+        let cell = |count: u128| {
+            format!(
+                "<table:table table:name=\"T\"><table:table-row>\
+                 <table:table-cell office:value-type=\"string\"><text:p>\
+                 <text:s text:c=\"{count}\"/></text:p></table:table-cell>\
+                 </table:table-row></table:table>"
+            )
+        };
+        let unlimited = Budget::new(None);
+        assert!(scan_content(cell(MAX_SPACES).as_bytes(), &unlimited).is_ok());
+        let error = scan_content(cell(MAX_SPACES + 1).as_bytes(), &unlimited).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "invalid .ods file: <text:s> elements expand to more than 100000000 spaces \
+             (reached in sheet \"T\")"
+        );
     }
 }

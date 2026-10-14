@@ -698,6 +698,20 @@ File.write!(
   )
 )
 
+# A formatting-only template: the DIMENSIONS record declares A1:IV50000
+# (50,000 rows × 256 columns, within .xls limits) but the sheet holds two
+# values. It parses whatever :max_cells is.
+File.write!(
+  fixture.("template.xls"),
+  Fixtures.Patch.replace_once!(
+    base_xls,
+    <<0x00, 0x02, 14, 0, 0::32-little, 2::32-little, 0::16-little, 2::16-little,
+      0::16>>,
+    <<0x00, 0x02, 14, 0, 0::32-little, 50_000::32-little, 0::16-little,
+      256::16-little, 0::16>>
+  )
+)
+
 # The compound file header's FAT sector count (offset 44) is used as a Vec
 # capacity: 0xFFFFFFFF entries is a 16 GB reservation.
 <<header::binary-size(44), _fat_sectors::32-little, rest::binary>> = base_xls
