@@ -13,6 +13,7 @@ use crate::format::{self, SheetCells, SparseCells};
 use crate::workbook::Workbook;
 use calamine::{Cell, Data, DataRef, Range};
 use rustler::{Encoder, Env, Term};
+use std::collections::HashMap;
 
 /// Reads sheet `name` and encodes its rows.
 pub fn read_sheet<'a>(
@@ -103,13 +104,16 @@ fn encode_range<'a>(
 }
 
 /// Encodes rows of terms, sharing one all-`nil` row term for every row that
-/// has no cells.
+/// has no cells, and one term for every use of the same shared string.
 struct RowEncoder<'a> {
     env: Env<'a>,
     nil: Term<'a>,
     columns: usize,
     row: Vec<Term<'a>>,
     empty_row: Option<Term<'a>>,
+    /// Terms of shared strings, keyed by their address in the workbook's
+    /// shared string table, which outlives the encoder.
+    shared_strings: HashMap<(usize, usize), Term<'a>>,
 }
 
 impl<'a> RowEncoder<'a> {
@@ -121,6 +125,7 @@ impl<'a> RowEncoder<'a> {
             columns,
             row: Vec::with_capacity(columns),
             empty_row: None,
+            shared_strings: HashMap::new(),
         }
     }
 
@@ -129,6 +134,14 @@ impl<'a> RowEncoder<'a> {
         *self
             .empty_row
             .get_or_insert_with(|| vec![nil; columns].encode(env))
+    }
+
+    fn shared_string(&mut self, text: &str) -> Term<'a> {
+        let env = self.env;
+        *self
+            .shared_strings
+            .entry((text.as_ptr() as usize, text.len()))
+            .or_insert_with(|| text.encode(env))
     }
 
     fn encode(&self, cell: &impl ToCellValue) -> Term<'a> {
@@ -152,7 +165,10 @@ impl<'a> RowEncoder<'a> {
         self.row.clear();
         self.row.resize(self.columns, self.nil);
         for cell in cells {
-            let term = self.encode(cell.get_value());
+            let term = match cell.get_value() {
+                DataRef::SharedString(text) => self.shared_string(text),
+                value => self.encode(value),
+            };
             self.row[cell.get_position().1 as usize] = term;
         }
         self.row.encode(self.env)
