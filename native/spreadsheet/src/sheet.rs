@@ -3,70 +3,27 @@
 //! in. Leading empty rows and columns are padded with `nil`.
 //!
 //! The output rectangle is checked against `:max_cells` before it is built.
-//! For .xlsx and .xlsb the cells are streamed from calamine's cell readers and
-//! the rectangle is computed from the cells themselves (the `<dimension>`
-//! element can be forged), instead of letting `Range::from_sparse` allocate
-//! the rectangle first.
 
+use crate::budget::Budget;
 use crate::cell::ToCellValue;
 use crate::encode::encode_cell;
-use crate::limits::CellLimit;
-use calamine::{Cell, Data, DataRef, Range, Reader, SheetType, Sheets, XlsxError};
+use crate::error::Error;
+use crate::format::{self, SheetCells};
+use crate::workbook::Workbook;
+use calamine::{Cell, Data, DataRef, Range};
 use rustler::{Encoder, Env, Term};
-use std::fmt::Display;
-use std::io::{Read, Seek};
 
 /// Reads sheet `name` and encodes its rows.
-pub fn read_sheet<'a, RS: Read + Seek>(
+pub fn read_sheet<'a>(
     env: Env<'a>,
-    workbook: &mut Sheets<RS>,
+    workbook: &mut Workbook,
     name: &str,
-    limit: CellLimit,
-) -> Result<Term<'a>, String> {
-    let sheet_type = workbook
-        .sheets_metadata()
-        .iter()
-        .find(|sheet| sheet.name == name)
-        .map(|sheet| sheet.typ)
-        .ok_or_else(|| format!("sheet {name:?} not found"))?;
-
-    // VBA modules hold no cells. Chart sheets are still read, because .xls
-    // chart sheets can carry the chart's data.
-    if sheet_type == SheetType::Vba {
-        return Ok(empty_list(env));
-    }
-
-    match workbook {
-        Sheets::Xlsx(xlsx) => match xlsx.worksheet_cells_reader(name) {
-            Ok(mut reader) => {
-                let cells = collect_cells(|| reader.next_cell(), "Xlsx")?;
-                encode_cells(env, name, cells, limit)
-            }
-            // calamine treats other sheet kinds as empty too.
-            Err(XlsxError::NotAWorksheet(_)) => Ok(empty_list(env)),
-            Err(error) => Err(format!("Xlsx error: {error}")),
-        },
-        // calamine's .xlsb cell reader fails on chart sheets, which hold no cells.
-        Sheets::Xlsb(_) if sheet_type == SheetType::ChartSheet => Ok(empty_list(env)),
-        Sheets::Xlsb(xlsb) => {
-            let mut reader = xlsb
-                .worksheet_cells_reader(name)
-                .map_err(|error| format!("Xlsb error: {error}"))?;
-            let cells = collect_cells(|| reader.next_cell(), "Xlsb")?;
-            encode_cells(env, name, cells, limit)
-        }
-        Sheets::Xls(xls) => {
-            let range = xls
-                .worksheet_range(name)
-                .map_err(|error| format!("Xls error: {error}"))?;
-            encode_range(env, name, &range, limit)
-        }
-        Sheets::Ods(ods) => {
-            let range = ods
-                .worksheet_range(name)
-                .map_err(|error| format!("Ods error: {error}"))?;
-            encode_range(env, name, &range, limit)
-        }
+    budget: &Budget,
+) -> Result<Term<'a>, Error> {
+    match format::read_cells(workbook, name)? {
+        SheetCells::Empty => Ok(empty_list(env)),
+        SheetCells::Sparse(cells) => encode_cells(env, name, cells, budget),
+        SheetCells::Range(range) => encode_range(env, name, &range, budget),
     }
 }
 
@@ -74,27 +31,13 @@ fn empty_list(env: Env) -> Term {
     Vec::<Term>::new().encode(env)
 }
 
-/// Collects a sheet's non-empty cells from a calamine cell reader.
-fn collect_cells<'cell, E: Display>(
-    mut next_cell: impl FnMut() -> Result<Option<Cell<DataRef<'cell>>>, E>,
-    format: &str,
-) -> Result<Vec<Cell<DataRef<'cell>>>, String> {
-    let mut cells = Vec::new();
-    while let Some(cell) = next_cell().map_err(|error| format!("{format} error: {error}"))? {
-        if *cell.get_value() != DataRef::Empty {
-            cells.push(cell);
-        }
-    }
-    Ok(cells)
-}
-
 /// Encodes sparse cells (.xlsx, .xlsb) once their rectangle passes the limit.
 fn encode_cells<'a>(
     env: Env<'a>,
     name: &str,
     mut cells: Vec<Cell<DataRef<'_>>>,
-    limit: CellLimit,
-) -> Result<Term<'a>, String> {
+    budget: &Budget,
+) -> Result<Term<'a>, Error> {
     let Some((last_row, last_column)) = cells.iter().fold(None, |extent, cell| {
         let (row, column) = cell.get_position();
         let (last_row, last_column) = extent.unwrap_or((0, 0));
@@ -104,7 +47,7 @@ fn encode_cells<'a>(
     };
     let rows = u64::from(last_row) + 1;
     let columns = u64::from(last_column) + 1;
-    limit.check_rectangle(name, rows, columns)?;
+    budget.check_rectangle(name, rows, columns)?;
 
     // Readers yield cells in file order, which is normally row-major but not
     // guaranteed. A stable sort keeps the last of duplicate cells last, and
@@ -135,14 +78,14 @@ fn encode_range<'a>(
     env: Env<'a>,
     name: &str,
     range: &Range<Data>,
-    limit: CellLimit,
-) -> Result<Term<'a>, String> {
+    budget: &Budget,
+) -> Result<Term<'a>, Error> {
     let (Some(start), Some(end)) = (range.start(), range.end()) else {
         return Ok(empty_list(env));
     };
     let rows = u64::from(end.0) + 1;
     let columns = u64::from(end.1) + 1;
-    limit.check_rectangle(name, rows, columns)?;
+    budget.check_rectangle(name, rows, columns)?;
 
     let mut encoder = RowEncoder::new(env, columns as usize);
     let mut encoded = Vec::with_capacity(rows as usize);

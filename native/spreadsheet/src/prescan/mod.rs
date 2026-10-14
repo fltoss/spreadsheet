@@ -1,0 +1,68 @@
+//! Pre-scans of the formats calamine decodes in full when it opens them.
+//!
+//! .xls and .ods workbooks are decoded sheet by sheet while calamine opens
+//! them, allocating each sheet's whole rectangle up front, and their
+//! containers are read with sizes and loops taken from the file. These scans
+//! read the raw file first, the way calamine 0.36 does, and reject it before
+//! calamine sees it. .xlsx and .xlsb sheets are streamed instead, so they are
+//! checked while their cells are collected (see `format.rs`).
+//!
+//! When a file is not something calamine would open (wrong container,
+//! truncated records, ...) the scans step aside and let calamine report its
+//! own error.
+
+mod biff;
+mod cfb;
+mod ods;
+
+use crate::budget::Budget;
+use crate::error::Error;
+use std::io::{Read, Seek, SeekFrom};
+
+pub use ods::check as ods;
+
+/// `Ok(None)` means "not applicable": calamine will reject the file itself.
+type Scan<T> = Result<Option<T>, Error>;
+
+/// Rejects .xls files whose compound file container or sheets would make
+/// calamine allocate without bound or loop forever.
+pub fn xls<RS: Read + Seek + ?Sized>(reader: &mut RS, budget: &Budget) -> Result<(), Error> {
+    if budget.is_unlimited() {
+        return Ok(());
+    }
+    let result = cfb::workbook_stream(reader).and_then(|stream| match stream {
+        Some(stream) => biff::scan_workbook(&stream, budget),
+        None => Ok(None),
+    });
+    // calamine expects to start reading from the beginning.
+    let _ = reader.seek(SeekFrom::Start(0));
+    result.map(|_| ())
+}
+
+fn invalid_xls(reason: &str) -> Error {
+    Error::InvalidXls(reason.to_string())
+}
+
+fn read_u16(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_compound_files_are_left_to_calamine() {
+        let mut reader = std::io::Cursor::new(b"PK\x03\x04 not an xls file".to_vec());
+        assert!(xls(&mut reader, &Budget::new(Some(1))).is_ok());
+    }
+}

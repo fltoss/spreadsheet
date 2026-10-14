@@ -17,7 +17,8 @@
 //!
 //! Anything calamine would fail on by itself is left to calamine.
 
-use super::CellLimit;
+use crate::budget::Budget;
+use crate::error::Error;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -36,16 +37,16 @@ const VALUE_ATTRIBUTES: [&[u8]; 5] = [
     b"office:boolean-value",
 ];
 
-pub fn check<RS: Read + Seek>(reader: &mut RS, limit: CellLimit) -> Result<(), String> {
-    if limit.is_unlimited() {
+pub fn check<RS: Read + Seek + ?Sized>(reader: &mut RS, budget: &Budget) -> Result<(), Error> {
+    if budget.is_unlimited() {
         return Ok(());
     }
-    let result = scan(reader, limit);
+    let result = scan(reader, budget);
     let _ = reader.seek(SeekFrom::Start(0));
     result
 }
 
-fn scan<RS: Read + Seek>(reader: &mut RS, limit: CellLimit) -> Result<(), String> {
+fn scan<RS: Read + Seek + ?Sized>(reader: &mut RS, budget: &Budget) -> Result<(), Error> {
     let Ok(mut archive) = ZipArchive::new(reader) else {
         return Ok(());
     };
@@ -69,7 +70,7 @@ fn scan<RS: Read + Seek>(reader: &mut RS, limit: CellLimit) -> Result<(), String
                 };
                 let name = String::from_utf8_lossy(&name).into_owned();
                 match scan_table(&mut xml)? {
-                    Some(table) => table.check(&name, limit)?,
+                    Some(table) => table.check(&name, budget)?,
                     None => return Ok(()),
                 }
             }
@@ -109,10 +110,10 @@ struct Table {
 }
 
 impl Table {
-    fn check(&self, name: &str, limit: CellLimit) -> Result<(), String> {
-        limit.check_rectangle(name, self.rows, self.columns)?;
-        limit.check_count(name, self.stored_cells, "stores")?;
-        limit.check_count(
+    fn check(&self, name: &str, budget: &Budget) -> Result<(), Error> {
+        budget.check_rectangle(name, self.rows, self.columns)?;
+        budget.check_count(name, self.stored_cells, "stores")?;
+        budget.check_count(
             name,
             self.spaces,
             "expands <text:s> elements to the size of",
@@ -121,7 +122,7 @@ impl Table {
 }
 
 /// Reads one `table:table`. `Ok(None)` means calamine would fail on it.
-fn scan_table<R: BufRead>(xml: &mut Reader<R>) -> Result<Option<Table>, String> {
+fn scan_table<R: BufRead>(xml: &mut Reader<R>) -> Result<Option<Table>, Error> {
     let mut table = Table::default();
     let mut row_index: u64 = 0;
     let mut buffer = Vec::with_capacity(1024);
@@ -162,7 +163,7 @@ struct Row {
 
 /// Mirrors calamine's `read_row`: empty cells are only stored when a later
 /// cell follows them, and repeats are capped at 16,384 columns.
-fn scan_row<R: BufRead>(xml: &mut Reader<R>) -> Result<Option<Row>, String> {
+fn scan_row<R: BufRead>(xml: &mut Reader<R>) -> Result<Option<Row>, Error> {
     let mut row = Row::default();
     let mut pending_empty: u64 = 0;
     let mut buffer = Vec::with_capacity(1024);
@@ -219,7 +220,7 @@ fn cell_has_content(element: &BytesStart) -> bool {
 }
 
 /// Skips to the end of the cell, adding up `<text:s text:c="n"/>` spaces.
-fn scan_cell<R: BufRead>(xml: &mut Reader<R>, end: &[u8]) -> Result<Option<u128>, String> {
+fn scan_cell<R: BufRead>(xml: &mut Reader<R>, end: &[u8]) -> Result<Option<u128>, Error> {
     let mut spaces: u128 = 0;
     let mut buffer = Vec::with_capacity(256);
     loop {
@@ -299,6 +300,6 @@ mod tests {
                     table:number-columns-repeated=\"4\"><text:p>a<text:s text:c=\"1000\"/>b</text:p>\
                     </table:table-cell></table:table-row>";
         assert_eq!(table(rows).spaces, 4000);
-        assert!(table(rows).check("T", CellLimit(Some(3999))).is_err());
+        assert!(table(rows).check("T", &Budget::new(Some(3999))).is_err());
     }
 }
