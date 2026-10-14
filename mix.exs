@@ -12,6 +12,7 @@ defmodule Spreadsheet.MixProject do
       start_permanent: Mix.env() == :prod,
       description: description(),
       package: package(),
+      docs: docs(),
       deps: deps()
     ]
   end
@@ -39,6 +40,7 @@ defmodule Spreadsheet.MixProject do
         "lib",
         "mix.exs",
         "README*",
+        "CHANGELOG*",
         "LICENSE*",
         "native/spreadsheet/.cargo",
         "native/spreadsheet/src",
@@ -47,7 +49,19 @@ defmodule Spreadsheet.MixProject do
       ],
       maintainers: ["Wilhelm H Kirschbaum"],
       licenses: ["MIT"],
-      links: %{"GitHub" => @github_url}
+      links: %{
+        "GitHub" => @github_url,
+        "Changelog" => "#{@github_url}/blob/main/CHANGELOG.md"
+      }
+    ]
+  end
+
+  defp docs do
+    [
+      main: "Spreadsheet",
+      source_url: @github_url,
+      source_ref: "v#{@version}",
+      extras: ["CHANGELOG.md"]
     ]
   end
 
