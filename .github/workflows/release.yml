@@ -6,8 +6,44 @@ on:
       - '*'
 
 jobs:
+  check_version:
+    name: Check the tag matches the project version
+    runs-on: ubuntu-22.04
+    outputs:
+      project-version: ${{ steps.versions.outputs.project-version }}
+    steps:
+    - name: Checkout source code
+      uses: actions/checkout@v7
+
+    - uses: erlef/setup-beam@v1
+      with:
+        otp-version: "28.5"
+        elixir-version: "1.19.5"
+
+    - name: Compare the tag with mix.exs and Cargo.toml
+      id: versions
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Ask Mix and Cargo for the versions instead of parsing the files.
+        mix_version=$(MIX_ENV=prod mix run --no-compile --no-deps-check --no-archives-check --no-start \
+          --eval 'IO.puts(Mix.Project.config()[:version])' 2>/dev/null)
+        cargo_version=$(cargo metadata --manifest-path native/spreadsheet/Cargo.toml \
+          --no-deps --format-version 1 | jq -r '.packages[0].version')
+        tag_version="${GITHUB_REF_NAME#v}"
+
+        echo "tag: ${GITHUB_REF_NAME}, mix.exs: ${mix_version}, Cargo.toml: ${cargo_version}"
+
+        if [ "$tag_version" != "$mix_version" ] || [ "$tag_version" != "$cargo_version" ]; then
+          echo "::error::Tag ${GITHUB_REF_NAME} does not match mix.exs (${mix_version}) and Cargo.toml (${cargo_version})"
+          exit 1
+        fi
+
+        echo "project-version=${mix_version}" >> "$GITHUB_OUTPUT"
+
   build_release:
     name: NIF ${{ matrix.nif }} - ${{ matrix.job.target }} (${{ matrix.job.os }})
+    needs: check_version
     runs-on: ${{ matrix.job.os }}
     permissions:
       contents: write
@@ -30,30 +66,6 @@ jobs:
     - name: Checkout source code
       uses: actions/checkout@v7
 
-    - name: Extract project version and check the tag
-      shell: bash
-      run: |
-        # Exactly one `@version "x.y.z"` line must exist in mix.exs.
-        matches=$(grep -cE '^  @version "[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?"$' mix.exs || true)
-        if [ "$matches" != "1" ]; then
-          echo "::error::expected exactly one '@version \"x.y.z\"' line in mix.exs, found $matches"
-          exit 1
-        fi
-        version=$(grep -E '^  @version "' mix.exs | cut -d'"' -f2)
-
-        crate_version=$(grep -m1 -E '^version = "' native/spreadsheet/Cargo.toml | cut -d'"' -f2)
-        if [ "$crate_version" != "$version" ]; then
-          echo "::error::native/spreadsheet/Cargo.toml version $crate_version does not match mix.exs version $version"
-          exit 1
-        fi
-
-        if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
-          echo "::error::tag $GITHUB_REF_NAME does not match mix.exs version v$version"
-          exit 1
-        fi
-
-        echo "PROJECT_VERSION=$version" >> "$GITHUB_ENV"
-
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
@@ -65,7 +77,7 @@ jobs:
       uses: philss/rustler-precompiled-action@v1.1.5
       with:
         project-name: spreadsheet
-        project-version: ${{ env.PROJECT_VERSION }}
+        project-version: ${{ needs.check_version.outputs.project-version }}
         target: ${{ matrix.job.target }}
         nif-version: ${{ matrix.nif }}
         use-cross: ${{ matrix.job.use-cross }}
