@@ -51,18 +51,11 @@ defmodule Spreadsheet do
           {:ok, list(String.t())} | {:error, String.t()}
   def sheet_names(path_or_content, opts \\ [])
       when is_binary(path_or_content) and is_list(opts) do
-    format = Keyword.get(opts, :format, :filename)
-    include_hidden = Keyword.get(opts, :hidden, true)
+    opts = Keyword.validate!(opts, format: :filename, hidden: true)
+    include_hidden = boolean_option!(opts, :hidden)
 
-    case format do
-      :filename ->
-        Calamine.sheet_names_from_path(path_or_content, include_hidden)
-
-      :binary ->
-        Calamine.sheet_names_from_binary(path_or_content, include_hidden)
-
-      other ->
-        invalid_format_error(other)
+    with {:ok, source} <- source(path_or_content, opts[:format]) do
+      Calamine.sheet_names(source, include_hidden)
     end
   end
 
@@ -134,66 +127,56 @@ defmodule Spreadsheet do
           {:ok, list() | list({String.t(), list()})} | {:error, binary()}
   def parse(path_or_content, opts \\ [])
       when is_binary(path_or_content) and is_list(opts) do
-    format = Keyword.get(opts, :format, :filename)
+    opts = Keyword.validate!(opts, format: :filename, hidden: true, sheet: nil)
+    sheet = sheet_option!(opts)
+    include_hidden = boolean_option!(opts, :hidden)
 
-    case Keyword.get(opts, :sheet) do
-      nil ->
-        parse_all_sheets(
-          path_or_content,
-          format,
-          Keyword.get(opts, :hidden, true)
-        )
-
-      sheet_name ->
-        parse_single_sheet(path_or_content, sheet_name, format)
+    with {:ok, source} <- source(path_or_content, opts[:format]),
+         {:ok, result} <- Calamine.parse(source, sheet, include_hidden) do
+      {:ok, parse_result(result, sheet)}
     end
   end
 
-  defp parse_single_sheet(path_or_content, sheet_name, format) do
-    with {:ok, rows} <- call_parser(path_or_content, sheet_name, format) do
-      {:ok, Spreadsheet.Parser.parse_rows(rows)}
-    end
-  end
+  defp parse_result(rows, sheet) when is_binary(sheet),
+    do: Spreadsheet.Parser.parse_rows(rows)
 
-  defp call_parser(path, sheet_name, :filename),
-    do: Calamine.parse_from_path(path, sheet_name)
-
-  defp call_parser(content, sheet_name, :binary),
-    do: Calamine.parse_from_binary(content, sheet_name)
-
-  defp call_parser(_, _, other), do: invalid_format_error(other)
-
-  defp parse_all_sheets(path_or_content, :filename, include_hidden),
+  defp parse_result(sheets, nil),
     do:
-      do_parse_all_sheets(
-        &Calamine.parse_all_from_path/2,
-        path_or_content,
-        include_hidden
-      )
+      Enum.map(sheets, fn {name, rows} ->
+        {name, Spreadsheet.Parser.parse_rows(rows)}
+      end)
 
-  defp parse_all_sheets(path_or_content, :binary, include_hidden),
-    do:
-      do_parse_all_sheets(
-        &Calamine.parse_all_from_binary/2,
-        path_or_content,
-        include_hidden
-      )
+  # An invalid `:format` is reported as an error tuple rather than raised, as
+  # it always has been.
+  defp source(path, :filename), do: {:ok, {:path, path}}
+  defp source(content, :binary), do: {:ok, {:binary, content}}
 
-  defp parse_all_sheets(_, other, _), do: invalid_format_error(other)
-
-  defp do_parse_all_sheets(parser, path_or_content, include_hidden) do
-    with {:ok, sheets} <- parser.(path_or_content, include_hidden) do
-      {:ok,
-       Enum.map(sheets, fn {name, rows} ->
-         {name, Spreadsheet.Parser.parse_rows(rows)}
-       end)}
-    end
-  end
-
-  defp invalid_format_error(other),
+  defp source(_path_or_content, other),
     do:
       {:error,
        "Invalid format option: #{inspect(other)}. Expected :filename or :binary"}
+
+  defp sheet_option!(opts) do
+    case opts[:sheet] do
+      sheet when is_binary(sheet) or is_nil(sheet) ->
+        sheet
+
+      other ->
+        raise ArgumentError,
+              "expected :sheet to be a string (or nil for all sheets), got: #{inspect(other)}"
+    end
+  end
+
+  defp boolean_option!(opts, key) do
+    case opts[key] do
+      value when is_boolean(value) ->
+        value
+
+      other ->
+        raise ArgumentError,
+              "expected #{inspect(key)} to be a boolean, got: #{inspect(other)}"
+    end
+  end
 
   @doc """
   Returns a list of sheet names from spreadsheet binary content.

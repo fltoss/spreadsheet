@@ -1,83 +1,95 @@
-use calamine::{
-    open_workbook_auto, open_workbook_auto_from_rs, Data, Reader, SheetVisible, Sheets,
-};
-use rustler::{Binary, NifTaggedEnum};
-use std::io::{Cursor, Read, Seek};
+mod workbook;
+
+use calamine::{Data, Reader, SheetVisible, Sheets};
+use rustler::{Encoder, Env, NifTaggedEnum, Term};
+use std::io::{Read, Seek};
+use workbook::{with_workbook, Source, WorkbookOperation};
 
 /// A parsed sheet: rows of cells.
 type Sheet = Vec<Vec<ColumnData>>;
-/// A sheet paired with its name, as returned by the bulk parsers.
-type NamedSheets = Vec<(String, Sheet)>;
 
-// The path- and binary-based NIFs differ only in how the workbook is opened;
-// both yield a `Sheets<RS>`, so the actual work lives in these generic helpers.
+/// Lists sheet names, in workbook order.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn sheet_names(source: Source, include_hidden: bool) -> Result<Vec<String>, String> {
+    with_workbook(source, SheetNames { include_hidden })
+}
 
-fn collect_sheet_names<RS: Read + Seek>(workbook: &Sheets<RS>, show_hidden: bool) -> Vec<String> {
+/// Parses one sheet (`sheet` is a name) into rows, or every sheet (`sheet` is
+/// `nil`) into `[{name, rows}]`.
+///
+/// Runs on a dirty CPU scheduler: path reads are a small part of the work next
+/// to decompression and XML/BIFF decoding, so one scheduler type fits both
+/// sources.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn parse<'a>(
+    env: Env<'a>,
+    source: Source,
+    sheet: Option<String>,
+    include_hidden: bool,
+) -> Result<Term<'a>, String> {
+    match sheet {
+        Some(name) => with_workbook(source, ParseSheet { name }).map(|rows| rows.encode(env)),
+        None => with_workbook(source, ParseAllSheets { include_hidden })
+            .map(|sheets| sheets.encode(env)),
+    }
+}
+
+struct SheetNames {
+    include_hidden: bool,
+}
+
+impl WorkbookOperation for SheetNames {
+    type Output = Vec<String>;
+
+    fn run<RS: Read + Seek>(self, workbook: Sheets<RS>) -> Result<Self::Output, String> {
+        Ok(visible_sheet_names(&workbook, self.include_hidden))
+    }
+}
+
+struct ParseSheet {
+    name: String,
+}
+
+impl WorkbookOperation for ParseSheet {
+    type Output = Sheet;
+
+    fn run<RS: Read + Seek>(self, mut workbook: Sheets<RS>) -> Result<Self::Output, String> {
+        parse_sheet(&mut workbook, &self.name)
+    }
+}
+
+struct ParseAllSheets {
+    include_hidden: bool,
+}
+
+impl WorkbookOperation for ParseAllSheets {
+    type Output = Vec<(String, Sheet)>;
+
+    fn run<RS: Read + Seek>(self, mut workbook: Sheets<RS>) -> Result<Self::Output, String> {
+        visible_sheet_names(&workbook, self.include_hidden)
+            .into_iter()
+            .map(|name| parse_sheet(&mut workbook, &name).map(|rows| (name, rows)))
+            .collect()
+    }
+}
+
+fn visible_sheet_names<RS: Read + Seek>(
+    workbook: &Sheets<RS>,
+    include_hidden: bool,
+) -> Vec<String> {
     workbook
         .sheets_metadata()
         .iter()
-        .filter(|sheet| show_hidden || sheet.visible == SheetVisible::Visible)
+        .filter(|sheet| include_hidden || sheet.visible == SheetVisible::Visible)
         .map(|sheet| sheet.name.clone())
         .collect()
 }
 
-fn parse_sheet<RS: Read + Seek>(
-    workbook: &mut Sheets<RS>,
-    sheet_name: &str,
-) -> Result<Sheet, String> {
+fn parse_sheet<RS: Read + Seek>(workbook: &mut Sheets<RS>, name: &str) -> Result<Sheet, String> {
     workbook
-        .worksheet_range(sheet_name)
-        .map_err(|e| e.to_string())
+        .worksheet_range(name)
+        .map_err(|error| error.to_string())
         .map(extract_rows)
-}
-
-fn parse_all_sheets<RS: Read + Seek>(
-    mut workbook: Sheets<RS>,
-    show_hidden: bool,
-) -> Result<NamedSheets, String> {
-    collect_sheet_names(&workbook, show_hidden)
-        .into_iter()
-        .map(|name| parse_sheet(&mut workbook, &name).map(|rows| (name, rows)))
-        .collect()
-}
-
-#[rustler::nif(schedule = "DirtyCpu")]
-fn sheet_names_from_binary(content: Binary, show_hidden: bool) -> Result<Vec<String>, String> {
-    let workbook =
-        open_workbook_auto_from_rs(Cursor::new(content.as_slice())).map_err(|e| e.to_string())?;
-    Ok(collect_sheet_names(&workbook, show_hidden))
-}
-
-#[rustler::nif(schedule = "DirtyCpu")]
-fn sheet_names_from_path(path: &str, show_hidden: bool) -> Result<Vec<String>, String> {
-    let workbook = open_workbook_auto(path).map_err(|e| e.to_string())?;
-    Ok(collect_sheet_names(&workbook, show_hidden))
-}
-
-#[rustler::nif(schedule = "DirtyCpu")]
-fn parse_from_path(path: &str, sheet_name: &str) -> Result<Sheet, String> {
-    let mut workbook = open_workbook_auto(path).map_err(|e| e.to_string())?;
-    parse_sheet(&mut workbook, sheet_name)
-}
-
-#[rustler::nif(schedule = "DirtyCpu")]
-fn parse_from_binary(content: Binary, sheet_name: &str) -> Result<Sheet, String> {
-    let mut workbook =
-        open_workbook_auto_from_rs(Cursor::new(content.as_slice())).map_err(|e| e.to_string())?;
-    parse_sheet(&mut workbook, sheet_name)
-}
-
-#[rustler::nif(schedule = "DirtyCpu")]
-fn parse_all_from_path(path: &str, show_hidden: bool) -> Result<NamedSheets, String> {
-    let workbook = open_workbook_auto(path).map_err(|e| e.to_string())?;
-    parse_all_sheets(workbook, show_hidden)
-}
-
-#[rustler::nif(schedule = "DirtyCpu")]
-fn parse_all_from_binary(content: Binary, show_hidden: bool) -> Result<NamedSheets, String> {
-    let workbook =
-        open_workbook_auto_from_rs(Cursor::new(content.as_slice())).map_err(|e| e.to_string())?;
-    parse_all_sheets(workbook, show_hidden)
 }
 
 #[derive(NifTaggedEnum, Debug)]

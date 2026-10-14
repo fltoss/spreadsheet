@@ -123,34 +123,97 @@ defmodule SpreadsheetTest do
     end
   end
 
-  describe "Calamine.parse_all_from_path/2 (bulk NIF — bug #4)" do
-    # Bug #4: parse_all_sheets currently re-opens the workbook for each sheet.
-    # A bulk NIF lets us open once and return all sheets.
-    test "returns [{sheet_name, rows}] in workbook order, honouring hidden" do
-      path = Path.join(@base_path, "test_file_1_hidden.xlsx")
-
-      assert {:ok, all_sheets} =
-               Spreadsheet.Calamine.parse_all_from_path(path, true)
-
-      assert [{"Sheet2", _}, {"Sheet1", _}] = all_sheets
-
-      assert {:ok, [{"Sheet1", _}]} =
-               Spreadsheet.Calamine.parse_all_from_path(path, false)
+  describe "option validation" do
+    setup do
+      %{path: Path.join(@base_path, "test_file_1.xlsx")}
     end
 
-    test "binary variant returns the same shape" do
+    test "unknown options raise", %{path: path} do
+      assert_raise ArgumentError, ~r/unknown keys \[:sheets\]/, fn ->
+        Spreadsheet.parse(path, sheets: "Sheet1")
+      end
+
+      assert_raise ArgumentError, ~r/unknown keys \[:sheet\]/, fn ->
+        Spreadsheet.sheet_names(path, sheet: "Sheet1")
+      end
+    end
+
+    test "a non-string :sheet raises", %{path: path} do
+      assert_raise ArgumentError,
+                   ~r/expected :sheet to be a string.*got: :Sheet1/,
+                   fn ->
+                     Spreadsheet.parse(path, sheet: :Sheet1)
+                   end
+    end
+
+    test "sheet: nil parses every sheet", %{path: path} do
+      assert {:ok, [{"Sheet1", _rows}]} = Spreadsheet.parse(path, sheet: nil)
+    end
+
+    test "a non-boolean :hidden raises", %{path: path} do
+      assert_raise ArgumentError,
+                   ~r/expected :hidden to be a boolean, got: "no"/,
+                   fn ->
+                     Spreadsheet.parse(path, hidden: "no")
+                   end
+
+      assert_raise ArgumentError, ~r/expected :hidden to be a boolean/, fn ->
+        Spreadsheet.sheet_names(path, hidden: nil)
+      end
+    end
+  end
+
+  describe "file errors" do
+    test "a missing file reports the I/O error" do
+      path = Path.join(@base_path, "does_not_exist.xlsx")
+
+      assert Spreadsheet.parse(path) ==
+               {:error,
+                "could not open #{inspect(path)}: No such file or directory"}
+
+      assert {:error, "could not open " <> _} = Spreadsheet.sheet_names(path)
+    end
+
+    test "a directory is not a spreadsheet" do
+      assert Spreadsheet.parse(@base_path) ==
+               {:error, "could not open #{inspect(@base_path)}: is a directory"}
+    end
+
+    test "file contents passed as a path return a hint instead of raising" do
       content = File.read!(Path.join(@base_path, "test_file_1.xlsx"))
 
-      assert {:ok, [{"Sheet1", [header | _]}]} =
-               Spreadsheet.Calamine.parse_all_from_binary(content, true)
+      assert {:error, message} = Spreadsheet.parse(content)
+      assert message =~ "did you mean format: :binary?"
 
-      # Raw NIF output uses Rustler's tagged form; parse_rows would unwrap it.
-      assert header == [
-               string: "Dates",
-               string: "Numbers",
-               string: "Percentages",
-               string: "Strings"
-             ]
+      assert {:error, message} = Spreadsheet.sheet_names(<<0xFF, 0, 0xFE>>)
+      assert message =~ "did you mean format: :binary?"
+    end
+
+    test "a path passed as content returns a hint" do
+      path = Path.join(@base_path, "test_file_1.xlsx")
+
+      assert {:error, message} = Spreadsheet.parse(path, format: :binary)
+      assert message =~ "did you mean format: :filename?"
+    end
+
+    test "non-UTF-8 paths are accepted" do
+      assert {:error, message} =
+               Spreadsheet.parse(<<"missing-", 0xE9, ".xlsx">>)
+
+      assert message =~ "No such file or directory"
+    end
+
+    test "a missing sheet returns an error naming the sheet" do
+      path = Path.join(@base_path, "test_file_1.xlsx")
+
+      assert {:error, message} = Spreadsheet.parse(path, sheet: "Nope")
+      assert message =~ "'Nope'"
+    end
+
+    test "content that is not a spreadsheet cannot be detected" do
+      assert Spreadsheet.parse("plain text", format: :binary) ==
+               {:error,
+                "Cannot detect file format: not a valid .xls, .xlsx, .xlsb or .ods file"}
     end
   end
 
