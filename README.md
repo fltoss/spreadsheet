@@ -250,6 +250,14 @@ By default, the library uses precompiled NIFs, so **you don't need Rust installe
 config :rustler_precompiled, :force_build, spreadsheet: true
 ```
 
+Building from source needs a Rust toolchain and `rustler` in your own
+dependencies (it is an optional dependency of this package). The crate uses
+rustler 0.38, so pin the same version:
+
+```elixir
+{:rustler, "~> 0.38.0", runtime: false}
+```
+
 ## Performance
 
 - **Native Speed**: Rust-powered parsing, with cells converted to their final
