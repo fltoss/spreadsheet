@@ -1,7 +1,7 @@
 defmodule SpreadsheetTest do
   use ExUnit.Case
 
-  @base_path Path.join(__DIR__, "/files")
+  @base_path Path.join(__DIR__, "fixtures")
 
   describe "sheet_names/2" do
     test "gets the sheet_names from binary content" do
