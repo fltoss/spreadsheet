@@ -442,7 +442,9 @@ dependencies = [
  "calamine",
  "chrono",
  "flate2",
+ "quick-xml",
  "rustler",
+ "zip",
 ]
 
 [[package]]

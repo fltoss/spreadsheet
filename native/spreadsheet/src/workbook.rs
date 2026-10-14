@@ -3,6 +3,7 @@
 //! Both sources go through the same format detection, so every NIF works on a
 //! `calamine::Sheets<RS>` regardless of where the bytes came from.
 
+use crate::limits::{self, CellLimit};
 use calamine::{open_workbook_from_rs, Error, Ods, Sheets, Xls, Xlsb, Xlsx};
 use rustler::{Atom, Binary, Decoder, NifResult, Term};
 use std::fs::File;
@@ -45,16 +46,20 @@ pub trait WorkbookOperation {
 }
 
 /// Opens the workbook described by `source` and runs `operation` on it.
+///
+/// .xls and .ods files are fully decoded when opened, so `limit` is enforced
+/// on them here, before calamine allocates anything.
 pub fn with_workbook<O: WorkbookOperation>(
     source: Source,
+    limit: CellLimit,
     operation: O,
 ) -> Result<O::Output, String> {
     match source {
         Source::Path(path) => {
             let path = decode_path(path.as_slice())?;
-            operation.run(open_path(&path)?)
+            operation.run(open_path(&path, limit)?)
         }
-        Source::Binary(content) => operation.run(open_binary(content.as_slice())?),
+        Source::Binary(content) => operation.run(open_binary(content.as_slice(), limit)?),
     }
 }
 
@@ -73,7 +78,7 @@ const ALL_FORMATS: [Format; 4] = [Format::Xls, Format::Xlsx, Format::Xlsb, Forma
 const ZIP_MAGIC: &[u8] = b"PK\x03\x04";
 const OLE_MAGIC: &[u8] = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1";
 
-fn open_path(path: &Path) -> Result<Sheets<BufReader<File>>, String> {
+fn open_path(path: &Path, limit: CellLimit) -> Result<Sheets<BufReader<File>>, String> {
     // Open the file up front so a missing or unreadable file reports the real
     // I/O error instead of calamine's "Cannot detect file format".
     let metadata = std::fs::metadata(path).map_err(|error| open_error(path, &error))?;
@@ -98,15 +103,15 @@ fn open_path(path: &Path) -> Result<Sheets<BufReader<File>>, String> {
         _ => &ALL_FORMATS[..],
     };
 
-    open_with(formats, || {
+    open_with(formats, limit, || {
         File::open(path)
             .map(BufReader::new)
             .map_err(|error| open_error(path, &error))
     })
 }
 
-fn open_binary(content: &[u8]) -> Result<Sheets<Cursor<&[u8]>>, String> {
-    open_with(&ALL_FORMATS, || Ok(Cursor::new(content))).map_err(|error| {
+fn open_binary(content: &[u8], limit: CellLimit) -> Result<Sheets<Cursor<&[u8]>>, String> {
+    open_with(&ALL_FORMATS, limit, || Ok(Cursor::new(content))).map_err(|error| {
         if looks_like_path(content) {
             format!("{error} (the content looks like a file path; did you mean format: :filename?)")
         } else {
@@ -118,16 +123,21 @@ fn open_binary(content: &[u8]) -> Result<Sheets<Cursor<&[u8]>>, String> {
 /// Tries each candidate format in turn with a fresh reader. With a single
 /// candidate (known extension) its own error is returned, which is more
 /// useful than a generic detection failure.
-fn open_with<RS, F>(formats: &[Format], mut make_reader: F) -> Result<Sheets<RS>, String>
+fn open_with<RS, F>(
+    formats: &[Format],
+    limit: CellLimit,
+    mut make_reader: F,
+) -> Result<Sheets<RS>, String>
 where
     RS: Read + Seek,
     F: FnMut() -> Result<RS, String>,
 {
     let mut last_error = None;
     for format in formats {
-        match open_as(*format, make_reader()?) {
+        match open_as(*format, make_reader()?, limit) {
             Ok(workbook) => return Ok(workbook),
-            Err(error) => last_error = Some(error),
+            Err(OpenError::Rejected(message)) => return Err(message),
+            Err(OpenError::Calamine(error)) => last_error = Some(error),
         }
     }
     match (formats.len(), last_error) {
@@ -136,8 +146,24 @@ where
     }
 }
 
-fn open_as<RS: Read + Seek>(format: Format, reader: RS) -> Result<Sheets<RS>, Error> {
+enum OpenError {
+    /// The file exceeds a limit; do not try other formats.
+    Rejected(String),
+    /// calamine could not open the file as this format.
+    Calamine(Error),
+}
+
+fn open_as<RS: Read + Seek>(
+    format: Format,
+    mut reader: RS,
+    limit: CellLimit,
+) -> Result<Sheets<RS>, OpenError> {
     match format {
+        Format::Xls => limits::xls::check(&mut reader, limit).map_err(OpenError::Rejected)?,
+        Format::Ods => limits::ods::check(&mut reader, limit).map_err(OpenError::Rejected)?,
+        Format::Xlsx | Format::Xlsb => (),
+    }
+    let workbook = match format {
         Format::Xls => open_workbook_from_rs::<Xls<RS>, RS>(reader)
             .map(Sheets::Xls)
             .map_err(Error::Xls),
@@ -150,7 +176,8 @@ fn open_as<RS: Read + Seek>(format: Format, reader: RS) -> Result<Sheets<RS>, Er
         Format::Ods => open_workbook_from_rs::<Ods<RS>, RS>(reader)
             .map(Sheets::Ods)
             .map_err(Error::Ods),
-    }
+    };
+    workbook.map_err(OpenError::Calamine)
 }
 
 /// Paths arrive as raw bytes. On Unix any byte sequence is a valid path, so no
@@ -234,7 +261,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn missing_files_report_the_io_error() {
-        let error = open_path(Path::new("/definitely/not/here.xlsx"))
+        let error = open_path(Path::new("/definitely/not/here.xlsx"), CellLimit(None))
             .err()
             .unwrap();
         assert_eq!(

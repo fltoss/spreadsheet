@@ -33,10 +33,11 @@ defmodule Spreadsheet.Calamine do
     nif_versions: nif_versions
 
   # `source` is `{:path, path}` or `{:binary, content}`.
-  def sheet_names(_source, _include_hidden),
+  def sheet_names(_source, _include_hidden, _max_cells),
     do: :erlang.nif_error(:nif_not_loaded)
 
-  # `sheet` is a sheet name, or `nil` to parse every sheet.
-  def parse(_source, _sheet, _include_hidden),
+  # `sheet` is a sheet name, or `nil` to parse every sheet. `max_cells` is a
+  # positive integer, or `nil` for no limit.
+  def parse(_source, _sheet, _include_hidden, _max_cells),
     do: :erlang.nif_error(:nif_not_loaded)
 end

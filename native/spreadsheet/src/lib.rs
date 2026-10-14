@@ -1,22 +1,32 @@
 mod cell;
 mod encode;
+mod limits;
 mod sheet;
 mod workbook;
 
 use calamine::{Reader, SheetVisible, Sheets};
+use limits::CellLimit;
 use rustler::{Encoder, Env, Term};
 use std::io::{Read, Seek};
 use workbook::{with_workbook, Source, WorkbookOperation};
 
 /// Lists sheet names, in workbook order.
+///
+/// `max_cells` (`nil` for no limit) applies here too: .xls and .ods workbooks
+/// are fully decoded when opened.
 #[rustler::nif(schedule = "DirtyCpu")]
-fn sheet_names(source: Source, include_hidden: bool) -> Result<Vec<String>, String> {
-    with_workbook(source, SheetNames { include_hidden })
+fn sheet_names(
+    source: Source,
+    include_hidden: bool,
+    max_cells: Option<u64>,
+) -> Result<Vec<String>, String> {
+    with_workbook(source, CellLimit(max_cells), SheetNames { include_hidden })
 }
 
 /// Parses one sheet (`sheet` is a name) into rows, or every sheet (`sheet` is
 /// `nil`) into `[{name, rows}]`. Cells are encoded straight into their final
-/// Elixir values.
+/// Elixir values. Sheets whose rows × columns (from A1) exceed `max_cells`
+/// are rejected before their rows are built.
 ///
 /// Runs on a dirty CPU scheduler: path reads are a small part of the work next
 /// to decompression and XML/BIFF decoding, so one scheduler type fits both
@@ -27,14 +37,18 @@ fn parse<'a>(
     source: Source,
     sheet: Option<String>,
     include_hidden: bool,
+    max_cells: Option<u64>,
 ) -> Result<Term<'a>, String> {
+    let limit = CellLimit(max_cells);
     match sheet {
-        Some(name) => with_workbook(source, ParseSheet { env, name }),
+        Some(name) => with_workbook(source, limit, ParseSheet { env, name, limit }),
         None => with_workbook(
             source,
+            limit,
             ParseAllSheets {
                 env,
                 include_hidden,
+                limit,
             },
         ),
     }
@@ -55,19 +69,21 @@ impl WorkbookOperation for SheetNames {
 struct ParseSheet<'a> {
     env: Env<'a>,
     name: String,
+    limit: CellLimit,
 }
 
 impl<'a> WorkbookOperation for ParseSheet<'a> {
     type Output = Term<'a>;
 
     fn run<RS: Read + Seek>(self, mut workbook: Sheets<RS>) -> Result<Self::Output, String> {
-        parse_sheet(self.env, &mut workbook, &self.name)
+        sheet::read_sheet(self.env, &mut workbook, &self.name, self.limit)
     }
 }
 
 struct ParseAllSheets<'a> {
     env: Env<'a>,
     include_hidden: bool,
+    limit: CellLimit,
 }
 
 impl<'a> WorkbookOperation for ParseAllSheets<'a> {
@@ -77,7 +93,7 @@ impl<'a> WorkbookOperation for ParseAllSheets<'a> {
         let sheets = visible_sheet_names(&workbook, self.include_hidden)
             .into_iter()
             .map(|name| {
-                let rows = parse_sheet(self.env, &mut workbook, &name)?;
+                let rows = sheet::read_sheet(self.env, &mut workbook, &name, self.limit)?;
                 Ok((name, rows))
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -95,17 +111,6 @@ fn visible_sheet_names<RS: Read + Seek>(
         .filter(|sheet| include_hidden || sheet.visible == SheetVisible::Visible)
         .map(|sheet| sheet.name.clone())
         .collect()
-}
-
-fn parse_sheet<'a, RS: Read + Seek>(
-    env: Env<'a>,
-    workbook: &mut Sheets<RS>,
-    name: &str,
-) -> Result<Term<'a>, String> {
-    let range = workbook
-        .worksheet_range(name)
-        .map_err(|error| error.to_string())?;
-    Ok(sheet::encode_range(env, &range))
 }
 
 rustler::init!("Elixir.Spreadsheet.Calamine");

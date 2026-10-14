@@ -17,6 +17,8 @@ defmodule Spreadsheet do
 
   alias Spreadsheet.Calamine
 
+  @default_max_cells 10_000_000
+
   @doc """
   Returns a list of sheet names from a spreadsheet file or binary content.
 
@@ -51,11 +53,18 @@ defmodule Spreadsheet do
           {:ok, list(String.t())} | {:error, String.t()}
   def sheet_names(path_or_content, opts \\ [])
       when is_binary(path_or_content) and is_list(opts) do
-    opts = Keyword.validate!(opts, format: :filename, hidden: true)
+    opts =
+      Keyword.validate!(opts,
+        format: :filename,
+        hidden: true,
+        max_cells: @default_max_cells
+      )
+
     include_hidden = boolean_option!(opts, :hidden)
+    max_cells = max_cells_option!(opts)
 
     with {:ok, source} <- source(path_or_content, opts[:format]) do
-      Calamine.sheet_names(source, include_hidden)
+      Calamine.sheet_names(source, include_hidden, max_cells)
     end
   end
 
@@ -127,12 +136,20 @@ defmodule Spreadsheet do
           {:ok, list() | list({String.t(), list()})} | {:error, binary()}
   def parse(path_or_content, opts \\ [])
       when is_binary(path_or_content) and is_list(opts) do
-    opts = Keyword.validate!(opts, format: :filename, hidden: true, sheet: nil)
+    opts =
+      Keyword.validate!(opts,
+        format: :filename,
+        hidden: true,
+        sheet: nil,
+        max_cells: @default_max_cells
+      )
+
     sheet = sheet_option!(opts)
     include_hidden = boolean_option!(opts, :hidden)
+    max_cells = max_cells_option!(opts)
 
     with {:ok, source} <- source(path_or_content, opts[:format]) do
-      Calamine.parse(source, sheet, include_hidden)
+      Calamine.parse(source, sheet, include_hidden, max_cells)
     end
   end
 
@@ -154,6 +171,23 @@ defmodule Spreadsheet do
       other ->
         raise ArgumentError,
               "expected :sheet to be a string (or nil for all sheets), got: #{inspect(other)}"
+    end
+  end
+
+  # The NIF takes an unsigned 64-bit limit, or nil for no limit.
+  @max_u64 18_446_744_073_709_551_615
+
+  defp max_cells_option!(opts) do
+    case opts[:max_cells] do
+      :infinity ->
+        nil
+
+      max_cells when is_integer(max_cells) and max_cells > 0 ->
+        min(max_cells, @max_u64)
+
+      other ->
+        raise ArgumentError,
+              "expected :max_cells to be a positive integer or :infinity, got: #{inspect(other)}"
     end
   end
 

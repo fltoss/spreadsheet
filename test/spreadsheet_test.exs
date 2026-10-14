@@ -204,10 +204,13 @@ defmodule SpreadsheetTest do
     end
 
     test "a missing sheet returns an error naming the sheet" do
-      path = Path.join(@base_path, "test_file_1.xlsx")
+      for file <-
+            ~w(test_file_1.xlsx test_file_1.xls test_file_1.ods types.xlsb) do
+        path = Path.join(@base_path, file)
 
-      assert {:error, message} = Spreadsheet.parse(path, sheet: "Nope")
-      assert message =~ "'Nope'"
+        assert Spreadsheet.parse(path, sheet: "Nope") ==
+                 {:error, ~s(sheet "Nope" not found)}
+      end
     end
 
     test "content that is not a spreadsheet cannot be detected" do
