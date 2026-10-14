@@ -1,9 +1,9 @@
 mod cell;
 mod encode;
+mod sheet;
 mod workbook;
 
-use calamine::{Data, Range, Reader, SheetVisible, Sheets};
-use cell::ToCellValue;
+use calamine::{Reader, SheetVisible, Sheets};
 use rustler::{Encoder, Env, Term};
 use std::io::{Read, Seek};
 use workbook::{with_workbook, Source, WorkbookOperation};
@@ -105,21 +105,7 @@ fn parse_sheet<'a, RS: Read + Seek>(
     let range = workbook
         .worksheet_range(name)
         .map_err(|error| error.to_string())?;
-    Ok(encode_rows(env, &range))
-}
-
-fn encode_rows<'a>(env: Env<'a>, range: &Range<Data>) -> Term<'a> {
-    let nil = rustler::types::atom::nil().encode(env);
-    range
-        .rows()
-        .map(|row| {
-            row.iter()
-                .map(|cell| encode::encode_cell(env, cell.to_cell_value(), nil))
-                .collect::<Vec<Term<'a>>>()
-                .encode(env)
-        })
-        .collect::<Vec<Term<'a>>>()
-        .encode(env)
+    Ok(sheet::encode_range(env, &range))
 }
 
 rustler::init!("Elixir.Spreadsheet.Calamine");
