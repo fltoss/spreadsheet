@@ -88,8 +88,8 @@ iex> Spreadsheet.parse(content, sheet: "Q1 Data", format: :binary)
 | Option       | Functions                 | Default      | Description |
 |--------------|---------------------------|--------------|-------------|
 | `:format`    | `parse/2`, `sheet_names/2` | `:filename`  | `:filename` (the first argument is a path) or `:binary` (it is the file's content). |
-| `:hidden`    | `parse/2`, `sheet_names/2` | `true`       | When `false`, hidden and very hidden sheets are skipped. Ignored by `parse/2` when `:sheet` is given. |
-| `:sheet`     | `parse/2`                  | `nil`        | Name of the sheet to parse. `nil` parses every sheet. |
+| `:hidden`    | `parse/2`, `sheet_names/2` | `true`       | When `false`, hidden and very hidden sheets are skipped. `nil` means the default. Ignored by `parse/2` when `:sheet` is given. |
+| `:sheet`     | `parse/2`                  | `nil`        | Name of the sheet to parse. `nil` parses every sheet. `sheet_names/2` accepts and ignores it, so one options list works for both. |
 | `:max_cells` | `parse/2`, `sheet_names/2` | `10_000_000` | Largest sheet accepted, as rows × columns counted from A1. `:infinity` disables the limit. |
 
 ### Rows Are Anchored at A1
@@ -162,8 +162,9 @@ wrong with the input file:
   backwards compatibility).
 
 They raise `ArgumentError` for programming errors: unknown options, a `:sheet`
-that is not a string or `nil`, a `:hidden` that is not a boolean, or a
-`:max_cells` that is not a positive integer or `:infinity`.
+that is not a string or `nil`, a `:hidden` that is not a boolean or `nil` (only
+checked when it is used), or a `:max_cells` that is not a positive integer or
+`:infinity`. Duplicate options do not raise: the first one wins.
 
 ### Limiting Sheet Size
 

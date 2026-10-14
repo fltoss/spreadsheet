@@ -133,9 +133,33 @@ defmodule SpreadsheetTest do
         Spreadsheet.parse(path, sheets: "Sheet1")
       end
 
-      assert_raise ArgumentError, ~r/unknown keys \[:sheet\]/, fn ->
-        Spreadsheet.sheet_names(path, sheet: "Sheet1")
+      assert_raise ArgumentError, ~r/unknown keys \[:sheets\]/, fn ->
+        Spreadsheet.sheet_names(path, sheets: "Sheet1")
       end
+
+      assert_raise ArgumentError,
+                   ~r/expected options to be a keyword list/,
+                   fn ->
+                     Spreadsheet.parse(path, [:hidden])
+                   end
+    end
+
+    test "duplicate options do not raise; the first one wins", %{path: path} do
+      assert {:ok, [_header | _rows]} =
+               Spreadsheet.parse(path, sheet: "Sheet1", sheet: "Other")
+
+      assert Spreadsheet.parse(path, sheet: "Other", sheet: "Sheet1") ==
+               {:error, ~s(sheet "Other" not found)}
+
+      assert {:ok, ["Sheet1"]} =
+               Spreadsheet.sheet_names(path, hidden: true, hidden: "ignored")
+    end
+
+    test "sheet_names/2 accepts and ignores :sheet", %{path: path} do
+      options = [sheet: "Sheet1", hidden: false]
+
+      assert Spreadsheet.sheet_names(path, options) == {:ok, ["Sheet1"]}
+      assert {:ok, [_header | _rows]} = Spreadsheet.parse(path, options)
     end
 
     test "a non-string :sheet raises", %{path: path} do
@@ -150,7 +174,7 @@ defmodule SpreadsheetTest do
       assert {:ok, [{"Sheet1", _rows}]} = Spreadsheet.parse(path, sheet: nil)
     end
 
-    test "a non-boolean :hidden raises", %{path: path} do
+    test "a non-boolean :hidden raises when it is used", %{path: path} do
       assert_raise ArgumentError,
                    ~r/expected :hidden to be a boolean, got: "no"/,
                    fn ->
@@ -158,8 +182,22 @@ defmodule SpreadsheetTest do
                    end
 
       assert_raise ArgumentError, ~r/expected :hidden to be a boolean/, fn ->
-        Spreadsheet.sheet_names(path, hidden: nil)
+        Spreadsheet.sheet_names(path, hidden: 0)
       end
+    end
+
+    test ":hidden is ignored when a sheet is named", %{path: path} do
+      assert {:ok, [_header | _rows]} =
+               Spreadsheet.parse(path, sheet: "Sheet1", hidden: "anything")
+    end
+
+    test "hidden: nil means the default", %{path: path} do
+      hidden_path = Path.join(@base_path, "test_file_1_hidden.xlsx")
+
+      assert Spreadsheet.sheet_names(hidden_path, hidden: nil) ==
+               Spreadsheet.sheet_names(hidden_path)
+
+      assert {:ok, [{"Sheet1", _rows}]} = Spreadsheet.parse(path, hidden: nil)
     end
   end
 

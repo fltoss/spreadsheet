@@ -10,6 +10,10 @@ defmodule Spreadsheet do
 
   @default_max_cells 10_000_000
 
+  # Accepted by both `parse/2` and `sheet_names/2`, so one options list can
+  # be passed to either (`sheet_names/2` ignores `:sheet`).
+  @allowed_options [:format, :hidden, :sheet, :max_cells]
+
   # The NIF takes an unsigned 64-bit limit, or nil for no limit.
   @max_u64 18_446_744_073_709_551_615
 
@@ -39,14 +43,17 @@ defmodule Spreadsheet do
     * `:format` - `:filename` (default) when the first argument is a path, or
       `:binary` when it is the file's content.
     * `:hidden` - when `false`, excludes hidden and very hidden sheets.
-      Defaults to `true`.
+      Defaults to `true` (`nil` also means the default).
+    * `:sheet` - accepted and ignored, so the same options can be passed to
+      `parse/2` and `sheet_names/2`.
     * `:max_cells` - the largest sheet accepted, as rows × columns counted from
       A1, or `:infinity`. Defaults to `#{@default_max_cells}`. Listing sheets
       only reads cells for .xls and .ods files, which are decoded in full when
       opened, so only those can exceed it here.
 
   Returns `{:error, reason}` when the file cannot be read or parsed, and
-  raises `ArgumentError` for unknown or invalid options.
+  raises `ArgumentError` for unknown or invalid options. With duplicate
+  options, the first one wins.
 
   ## Examples
 
@@ -68,17 +75,11 @@ defmodule Spreadsheet do
           {:ok, [String.t()]} | {:error, String.t()}
   def sheet_names(path_or_content, opts \\ [])
       when is_binary(path_or_content) and is_list(opts) do
-    opts =
-      Keyword.validate!(opts,
-        format: :filename,
-        hidden: true,
-        max_cells: @default_max_cells
-      )
-
-    include_hidden = boolean_option!(opts, :hidden)
+    validate_option_keys!(opts)
+    include_hidden = hidden_option!(opts)
     max_cells = max_cells_option!(opts)
 
-    with {:ok, source} <- source(path_or_content, opts[:format]) do
+    with {:ok, source} <- source(path_or_content, format_option(opts)) do
       Calamine.sheet_names(source, include_hidden, max_cells)
     end
   end
@@ -101,15 +102,16 @@ defmodule Spreadsheet do
     * `:format` - `:filename` (default) when the first argument is a path, or
       `:binary` when it is the file's content.
     * `:hidden` - when `false`, excludes hidden and very hidden sheets from
-      all-sheets parsing. Defaults to `true`. Ignored when `:sheet` is given:
-      naming a sheet always parses it.
+      all-sheets parsing. Defaults to `true` (`nil` also means the default).
+      Ignored, and not validated, when `:sheet` is given: naming a sheet
+      always parses it.
     * `:max_cells` - the largest sheet accepted, as rows × columns counted from
       A1, or `:infinity`. Defaults to `#{@default_max_cells}`. Larger sheets
       return an error before they are expanded.
 
   Returns `{:error, reason}` when the file cannot be read or parsed, the sheet
   does not exist or a sheet exceeds `:max_cells`, and raises `ArgumentError`
-  for unknown or invalid options.
+  for unknown or invalid options. With duplicate options, the first one wins.
 
   ## Examples
 
@@ -147,19 +149,13 @@ defmodule Spreadsheet do
           {:ok, rows() | [{String.t(), rows()}]} | {:error, String.t()}
   def parse(path_or_content, opts \\ [])
       when is_binary(path_or_content) and is_list(opts) do
-    opts =
-      Keyword.validate!(opts,
-        format: :filename,
-        hidden: true,
-        sheet: nil,
-        max_cells: @default_max_cells
-      )
-
+    validate_option_keys!(opts)
     sheet = sheet_option!(opts)
-    include_hidden = boolean_option!(opts, :hidden)
+    # Naming a sheet always parses it, so :hidden is not read then.
+    include_hidden = if is_nil(sheet), do: hidden_option!(opts), else: true
     max_cells = max_cells_option!(opts)
 
-    with {:ok, source} <- source(path_or_content, opts[:format]) do
+    with {:ok, source} <- source(path_or_content, format_option(opts)) do
       Calamine.parse(source, sheet, include_hidden, max_cells)
     end
   end
@@ -207,8 +203,33 @@ defmodule Spreadsheet do
       {:error,
        "Invalid format option: #{inspect(other)}. Expected :filename or :binary"}
 
+  # Options are read with `Keyword.get/3`, so with duplicate keys the first one
+  # wins, as it always has. Only keys that no function accepts raise.
+  defp validate_option_keys!(opts) do
+    unknown =
+      opts
+      |> Enum.map(fn
+        {key, _value} when is_atom(key) ->
+          key
+
+        other ->
+          raise ArgumentError,
+                "expected options to be a keyword list, got: #{inspect(other)} in #{inspect(opts)}"
+      end)
+      |> Enum.reject(&(&1 in @allowed_options))
+      |> Enum.uniq()
+
+    if unknown != [] do
+      raise ArgumentError,
+            "unknown keys #{inspect(unknown)} in #{inspect(opts)}, " <>
+              "the allowed keys are: #{inspect(@allowed_options)}"
+    end
+  end
+
+  defp format_option(opts), do: Keyword.get(opts, :format, :filename)
+
   defp sheet_option!(opts) do
-    case opts[:sheet] do
+    case Keyword.get(opts, :sheet) do
       sheet when is_binary(sheet) or is_nil(sheet) ->
         sheet
 
@@ -218,8 +239,23 @@ defmodule Spreadsheet do
     end
   end
 
+  # `nil` means the default, like `sheet: nil`.
+  defp hidden_option!(opts) do
+    case Keyword.get(opts, :hidden) do
+      nil ->
+        true
+
+      hidden when is_boolean(hidden) ->
+        hidden
+
+      other ->
+        raise ArgumentError,
+              "expected :hidden to be a boolean, got: #{inspect(other)}"
+    end
+  end
+
   defp max_cells_option!(opts) do
-    case opts[:max_cells] do
+    case Keyword.get(opts, :max_cells, @default_max_cells) do
       :infinity ->
         nil
 
@@ -229,17 +265,6 @@ defmodule Spreadsheet do
       other ->
         raise ArgumentError,
               "expected :max_cells to be a positive integer or :infinity, got: #{inspect(other)}"
-    end
-  end
-
-  defp boolean_option!(opts, key) do
-    case opts[key] do
-      value when is_boolean(value) ->
-        value
-
-      other ->
-        raise ArgumentError,
-              "expected #{inspect(key)} to be a boolean, got: #{inspect(other)}"
     end
   end
 end
