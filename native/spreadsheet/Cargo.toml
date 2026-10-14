@@ -9,12 +9,19 @@ name = "spreadsheet"
 crate-type = ["cdylib"]
 
 [dependencies]
-calamine = { version = "0.36.0", features = ["chrono"]}
+# Pinned exactly: src/prescan mirrors calamine's internals (how it reads the
+# compound file container, BIFF records and .ods content, and what it
+# allocates), and src/format.rs relies on its reader behaviour. Re-audit the
+# pre-scans against calamine's source before changing this version; a unit
+# test (prescan::tests::mirrored_crate_versions) fails until you do.
+calamine = { version = "=0.36.1", features = ["chrono"] }
 rustler = "0.38.0"
 chrono = "0.4.44"
-# Used directly to pre-scan .ods files; same versions and features calamine uses.
-quick-xml = { version = "0.41", features = ["encoding"] }
-zip = { version = "8.6", default-features = false, features = ["deflate"] }
+# Used directly by the .ods pre-scan to read content.xml the way calamine
+# does, so they are pinned to the versions calamine 0.36.1 resolves to, with
+# the same features.
+quick-xml = { version = "=0.41.0", features = ["encoding"] }
+zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 # zip turns off flate2 defaults, and since flate2 1.1.10 that also drops runtime
 # CPU feature detection (SIMD) in zlib-rs. Re-enable it without changing the backend.
 flate2 = { version = "1.1.10", default-features = false, features = ["runtime_detection"] }
@@ -25,3 +32,10 @@ flate2 = { version = "1.1.10", default-features = false, features = ["runtime_de
 # use the same version so they behave like the published binaries.
 default = ["nif_version_2_16"]
 nif_version_2_16 = ["rustler/nif_version_2_16"]
+
+# This crate is its own workspace root, so this profile applies to local,
+# precompiled (rustler-precompiled-action) and force_build builds alike.
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "debuginfo"

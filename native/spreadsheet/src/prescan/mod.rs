@@ -62,6 +62,26 @@ fn read_u32(bytes: &[u8], offset: usize) -> u32 {
 mod tests {
     use super::*;
 
+    /// The pre-scans mirror calamine's internals and read .ods files with the
+    /// same quick-xml and zip. A version change needs a new audit.
+    #[test]
+    fn mirrored_crate_versions() {
+        let lock = include_str!("../../Cargo.lock");
+        for (name, version) in [
+            ("calamine", "0.36.1"),
+            ("quick-xml", "0.41.0"),
+            ("zip", "8.6.0"),
+        ] {
+            let package = format!("name = \"{name}\"\n");
+            let entry = format!("{package}version = \"{version}\"\n");
+            assert!(
+                lock.contains(&entry) && lock.matches(&package).count() == 1,
+                "{name} no longer resolves to exactly {version}: re-audit src/prescan against \
+                 its source (and calamine's use of it), then update this test"
+            );
+        }
+    }
+
     #[test]
     fn non_compound_files_are_left_to_calamine() {
         let mut reader = std::io::Cursor::new(b"PK\x03\x04 not an xls file".to_vec());
