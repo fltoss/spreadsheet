@@ -114,7 +114,7 @@ match on error messages.
   its rows × columns counted from A1. `.xlsx`/`.xlsb` sheets are checked
   against their actual cells while they are read (the declared `<dimension>`
   is ignored); `.xls`/`.ods` files are pre-scanned before calamine opens them.
-- `Spreadsheet.cell/0` and `Spreadsheet.rows/0` types.
+- `t:Spreadsheet.cell/0` and `t:Spreadsheet.rows/0` types.
 - Tests and generated fixtures (`test/fixtures/build_fixtures.exs`) covering
   `.xlsb`, data not starting at A1, time-of-day cells, positive and negative
   durations, error cells from LibreOffice exports, the 1904 date epoch,

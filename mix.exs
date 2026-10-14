@@ -61,7 +61,9 @@ defmodule Spreadsheet.MixProject do
       main: "Spreadsheet",
       source_url: @github_url,
       source_ref: "v#{@version}",
-      extras: ["CHANGELOG.md"]
+      extras: ["CHANGELOG.md"],
+      # The changelog names removed and internal functions on purpose.
+      skip_undefined_reference_warnings_on: ["CHANGELOG.md"]
     ]
   end
 
