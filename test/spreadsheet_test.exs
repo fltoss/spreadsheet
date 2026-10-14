@@ -259,9 +259,26 @@ defmodule SpreadsheetTest do
     end
 
     test "content that is not a spreadsheet cannot be detected" do
+      # The same message as 0.6.
       assert Spreadsheet.parse("plain text", format: :binary) ==
-               {:error,
-                "Cannot detect file format: not a valid .xls, .xlsx, .xlsb or .ods file"}
+               {:error, "Cannot detect file format"}
+
+      assert Spreadsheet.sheet_names("plain text", format: :binary) ==
+               {:error, "Cannot detect file format"}
+    end
+
+    test "truncated zip content reports the zip error" do
+      xlsx = File.read!(Path.join(@base_path, "test_file_1.xlsx"))
+
+      assert {:error, "Xlsx error: Zip error: " <> _reason} =
+               Spreadsheet.parse(binary_part(xlsx, 0, 1000), format: :binary)
+
+      ods = File.read!(Path.join(@base_path, "test_file_1.ods"))
+
+      assert {:error, "Ods error: Zip error: " <> _reason} =
+               Spreadsheet.sheet_names(binary_part(ods, 0, 1000),
+                 format: :binary
+               )
     end
   end
 

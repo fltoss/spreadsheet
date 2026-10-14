@@ -62,9 +62,7 @@ impl fmt::Display for Error {
                 "could not open the given path: it is not valid UTF-8; \
                  did you mean format: :binary?",
             ),
-            Error::UnknownFormat => formatter.write_str(
-                "Cannot detect file format: not a valid .xls, .xlsx, .xlsb or .ods file",
-            ),
+            Error::UnknownFormat => formatter.write_str("Cannot detect file format"),
             Error::PathGivenAsContent(error) => write!(
                 formatter,
                 "{error} (the content looks like a file path; did you mean format: :filename?)"

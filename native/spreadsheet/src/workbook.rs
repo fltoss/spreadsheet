@@ -5,7 +5,7 @@
 
 use crate::budget::Budget;
 use crate::error::Error;
-use crate::format::{Format, OpenError};
+use crate::format::{Format, OpenError, ZIP_MAGIC};
 use calamine::{Reader, SheetVisible, Sheets};
 use rustler::{Atom, Binary, Decoder, NifResult, Term};
 use std::fs::File;
@@ -66,7 +66,6 @@ pub fn sheet_names(workbook: &Workbook, include_hidden: bool) -> Vec<String> {
         .collect()
 }
 
-const ZIP_MAGIC: &[u8] = b"PK\x03\x04";
 const OLE_MAGIC: &[u8] = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1";
 
 fn open_path<'a>(path: &Path, budget: &Budget) -> Result<Workbook<'a>, Error> {
@@ -80,18 +79,21 @@ fn open_path<'a>(path: &Path, budget: &Budget) -> Result<Workbook<'a>, Error> {
     }
     File::open(path).map_err(|error| open_error(path, &error))?;
 
-    let formats = match Format::from_extension(path) {
-        Some(format) => vec![format],
-        None => Format::DETECTION_ORDER.to_vec(),
+    let (formats, reported) = match Format::from_extension(path) {
+        Some(format) => (vec![format], Some(format)),
+        None => (Format::DETECTION_ORDER.to_vec(), None),
     };
-    open_with(&formats, budget, || {
+    open_with(&formats, reported, budget, || {
         let file = File::open(path).map_err(|error| open_error(path, &error))?;
         Ok(Box::new(BufReader::new(file)))
     })
 }
 
 fn open_binary<'a>(content: &'a [u8], budget: &Budget) -> Result<Workbook<'a>, Error> {
-    open_with(&Format::DETECTION_ORDER, budget, || {
+    // Damaged zip content cannot be detected, but its zip error says more
+    // than "Cannot detect file format".
+    let reported = Format::zip_based(content);
+    open_with(&Format::DETECTION_ORDER, reported, budget, || {
         Ok(Box::new(Cursor::new(content)))
     })
     .map_err(|error| {
@@ -103,26 +105,28 @@ fn open_binary<'a>(content: &'a [u8], budget: &Budget) -> Result<Workbook<'a>, E
     })
 }
 
-/// Tries each candidate format in turn with a fresh reader. With a single
-/// candidate (known extension) its own error is returned, which is more
-/// useful than a generic detection failure.
+/// Tries each candidate format in turn with a fresh reader. When none opens
+/// the file, the `reported` format's own error is returned (the format the
+/// extension names, or the zip-based format of damaged zip content), as it is
+/// more useful than calamine's generic "Cannot detect file format".
 fn open_with<'a>(
     formats: &[Format],
+    reported: Option<Format>,
     budget: &Budget,
     mut make_reader: impl FnMut() -> Result<Box<dyn ReadSeek + 'a>, Error>,
 ) -> Result<Workbook<'a>, Error> {
-    let mut last_error = None;
+    let mut reported_error = None;
     for format in formats {
         match format.open(make_reader()?, budget) {
             Ok(workbook) => return Ok(workbook),
             Err(OpenError::Rejected(error)) => return Err(error),
-            Err(OpenError::NotThisFormat(error)) => last_error = Some(error),
+            Err(OpenError::NotThisFormat(error)) if Some(*format) == reported => {
+                reported_error = Some(error);
+            }
+            Err(OpenError::NotThisFormat(_)) => (),
         }
     }
-    match (formats.len(), last_error) {
-        (1, Some(error)) => Err(Error::Calamine(error)),
-        _ => Err(Error::UnknownFormat),
-    }
+    Err(reported_error.map_or(Error::UnknownFormat, Error::Calamine))
 }
 
 /// Paths arrive as raw bytes. On Unix any byte sequence is a valid path, so no

@@ -19,6 +19,11 @@ pub enum Format {
     Ods,
 }
 
+/// Local file header signature that zip-based formats start with.
+pub const ZIP_MAGIC: &[u8] = b"PK\x03\x04";
+
+const ODS_MIMETYPE: &[u8] = b"application/vnd.oasis.opendocument.spreadsheet";
+
 /// Why a format could not open a file.
 pub enum OpenError {
     /// The pre-scan rejected the file; do not try other formats.
@@ -53,6 +58,22 @@ impl Format {
             "ods" => Some(Format::Ods),
             _ => None,
         }
+    }
+
+    /// For content that starts like a zip archive: .ods when its first entry
+    /// is an OpenDocument spreadsheet `mimetype`, .xlsx otherwise.
+    pub fn zip_based(content: &[u8]) -> Option<Format> {
+        if !content.starts_with(ZIP_MAGIC) {
+            return None;
+        }
+        // The `mimetype` entry is stored first and uncompressed: its name
+        // starts at offset 30 and its content follows a few bytes later.
+        let start = &content[..content.len().min(128)];
+        let ods = start.get(30..38) == Some(b"mimetype".as_slice())
+            && start
+                .windows(ODS_MIMETYPE.len())
+                .any(|window| window == ODS_MIMETYPE);
+        Some(if ods { Format::Ods } else { Format::Xlsx })
     }
 
     fn of(workbook: &Workbook) -> Format {
@@ -152,4 +173,31 @@ fn collect_cells<'a, E>(
         }
     }
     Ok(SheetCells::Sparse(cells))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn damaged_zips_report_the_zip_based_format() {
+        let mut ods = b"PK\x03\x04".to_vec();
+        ods.resize(30, 0);
+        ods.extend_from_slice(b"mimetypeapplication/vnd.oasis.opendocument.spreadsheetPK");
+        assert_eq!(Format::zip_based(&ods), Some(Format::Ods));
+        assert_eq!(
+            Format::zip_based(b"PK\x03\x04truncated"),
+            Some(Format::Xlsx)
+        );
+        assert_eq!(Format::zip_based(b"plain text"), None);
+    }
+
+    #[test]
+    fn extensions_ignore_case() {
+        assert_eq!(
+            Format::from_extension(Path::new("a/REPORT.XLSM")),
+            Some(Format::Xlsx)
+        );
+        assert_eq!(Format::from_extension(Path::new("a.csv")), None);
+    }
 }
