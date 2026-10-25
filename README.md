@@ -90,11 +90,12 @@ iex> Spreadsheet.parse(content, sheet: "Q1 Data", format: :binary)
 | `:format`    | `parse/2`, `sheet_names/2` | `:filename`  | `:filename` (the first argument is a path) or `:binary` (it is the file's content). |
 | `:hidden`    | `parse/2`, `sheet_names/2` | `true`       | When `false`, hidden and very hidden sheets are skipped. `nil` means the default. Ignored by `parse/2` when `:sheet` is given. |
 | `:sheet`     | `parse/2`                  | `nil`        | Name of the sheet to parse. `nil` parses every sheet. `sheet_names/2` accepts and ignores it, so one options list works for both. |
-| `:max_cells` | `parse/2`, `sheet_names/2` | `50_000_000` | Cell budget of the call: the rows × columns (from A1) of every sheet built, summed. `:infinity` disables it. See "Limiting Memory" below. |
+| `:max_cells` | `parse/2`, `sheet_names/2` | `50_000_000` | Cell budget of the call: the rows × columns (from A1, or from the data with `anchor: :data`) of every sheet built, summed. `:infinity` disables it. See "Limiting Memory" below. |
+| `:anchor`    | `parse/2`                  | `:a1`        | `:a1` anchors rows at A1. `:data` starts them at the first non-empty row and column. `sheet_names/2` accepts and ignores it. |
 
 ### Rows Are Anchored at A1
 
-Rows always start at the top-left corner of the sheet: `rows |> Enum.at(r) |> Enum.at(c)`
+By default, rows start at the top-left corner of the sheet: `rows |> Enum.at(r) |> Enum.at(c)`
 is the cell in spreadsheet row `r + 1`, column `c + 1`, wherever the data starts.
 Leading empty rows and columns are padded with `nil`, and every row has the same
 length. A sheet whose data occupies `C3:D4` returns:
@@ -107,6 +108,10 @@ length. A sheet whose data occupies `C3:D4` returns:
   [nil, nil, "a", 1.0]
 ]}
 ```
+
+With `anchor: :data`, rows start at the first non-empty row and column instead,
+so the same sheet returns `[["name", "value"], ["a", 1.0]]`. A sheet that starts
+at A1 returns the same rows either way.
 
 Empty sheets, chart sheets and other sheets without cells return `[]`. They are
 still listed by `sheet_names/2`. The exception is `.xls` chart sheets, which
@@ -171,7 +176,7 @@ checked when it is used), or a `:max_cells` that is not a positive integer or
 Rows are fully built in memory, and padding to A1 means a single cell in
 `XFD1048576` produces a 1,048,576 × 16,384 rectangle. `:max_cells` is a cell
 budget for one call: every sheet the call builds costs its rows × columns,
-counted from A1, and a sheet that does not fit in what is left returns an error
+counted from A1 (or from the data with `anchor: :data`), and a sheet that does not fit in what is left returns an error
 before anything is allocated for it. The default of 50 million fits, for
 example, one sheet of 1,048,576 rows × 47 columns, or 500,000 rows × 100
 columns:
