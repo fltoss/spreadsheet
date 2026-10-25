@@ -88,7 +88,7 @@ defmodule Spreadsheet.AnchoringTest do
   test "anchor: :data spends only the data's rectangle from :max_cells" do
     path = Path.join(@fixtures, "offset.xlsx")
 
-    # C3:E6 is 4 × 3 cells; from A1 it is 6 × 5.
+    # C3:E6 is 4 × 3 cells; from A1 the sheet is over 12 by C4 (4 × 4).
     assert Spreadsheet.parse(path,
              sheet: "Offset",
              anchor: :data,
@@ -96,7 +96,9 @@ defmodule Spreadsheet.AnchoringTest do
            ) ==
              {:ok, @expected_from_data}
 
-    assert {:error, "sheet \"Offset\" has 6 rows × 5 columns" <> _} =
-             Spreadsheet.parse(path, sheet: "Offset", max_cells: 12)
+    assert Spreadsheet.parse(path, sheet: "Offset", max_cells: 12) ==
+             {:error,
+              ~s|sheet "Offset" has 4 rows × 4 columns (16 cells), | <>
+                "above the :max_cells limit of 12"}
   end
 end
