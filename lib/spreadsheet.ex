@@ -11,8 +11,8 @@ defmodule Spreadsheet do
   @default_max_cells 50_000_000
 
   # Accepted by both `parse/2` and `sheet_names/2`, so one options list can
-  # be passed to either (`sheet_names/2` ignores `:sheet`).
-  @allowed_options [:format, :hidden, :sheet, :max_cells]
+  # be passed to either (`sheet_names/2` ignores `:sheet` and `:anchor`).
+  @allowed_options [:format, :hidden, :sheet, :max_cells, :anchor]
 
   # The NIF takes an unsigned 64-bit limit, or nil for no limit.
   @max_u64 18_446_744_073_709_551_615
@@ -44,8 +44,8 @@ defmodule Spreadsheet do
       `:binary` when it is the file's content.
     * `:hidden` - when `false`, excludes hidden and very hidden sheets.
       Defaults to `true` (`nil` also means the default).
-    * `:sheet` - accepted and ignored, so the same options can be passed to
-      `parse/2` and `sheet_names/2`.
+    * `:sheet` and `:anchor` - accepted and ignored, so the same options can
+      be passed to `parse/2` and `sheet_names/2`.
     * `:max_cells` - the cell budget of the call, or `:infinity`. Defaults to
       `#{@default_max_cells}`. Listing sheets only reads cells for .xls and
       .ods files, which are decoded in full when opened: every sheet's rows ×
@@ -94,7 +94,9 @@ defmodule Spreadsheet do
 
   Rows are lists of cells anchored at A1: row 0 is spreadsheet row 1 and
   column 0 is column A, with leading empty rows and columns padded with `nil`.
-  See "Data Types" in the module documentation for the value of each cell.
+  With `anchor: :data` they start at the first non-empty row and column
+  instead. See "Data Types" in the module documentation for the value of each
+  cell.
 
   ## Options
 
@@ -113,6 +115,10 @@ defmodule Spreadsheet do
       does not fit returns an error before it is expanded. .xls and .ods
       files are decoded in full when opened, so for them every sheet of the
       workbook counts, even when one sheet is requested.
+    * `:anchor` - `:a1` (default) anchors rows at A1. `:data` drops the
+      leading empty rows and columns, so row 0 and column 0 are the first
+      that hold a value; each sheet then costs only that rectangle from
+      `:max_cells`.
 
   Returns `{:error, reason}` when the file cannot be read or parsed, the sheet
   does not exist or the sheets exceed `:max_cells`, and raises `ArgumentError`
@@ -149,6 +155,10 @@ defmodule Spreadsheet do
       Spreadsheet.parse("big.xlsx", sheet: "Data", max_cells: 100_000_000)
       {:ok, [[...]]}
 
+      # Start at the data, wherever it begins (here C3)
+      Spreadsheet.parse("offset.xlsx", sheet: "Data", anchor: :data)
+      {:ok, [["name", "value"], ["a", 1.0]]}
+
   """
   @spec parse(binary(), keyword()) ::
           {:ok, rows() | [{String.t(), rows()}]} | {:error, String.t()}
@@ -159,9 +169,10 @@ defmodule Spreadsheet do
     # Naming a sheet always parses it, so :hidden is not read then.
     include_hidden = if is_nil(sheet), do: hidden_option!(opts), else: true
     max_cells = max_cells_option!(opts)
+    anchor = anchor_option!(opts)
 
     with {:ok, source} <- source(path_or_content, format_option(opts)) do
-      Calamine.parse(source, sheet, include_hidden, max_cells)
+      Calamine.parse(source, sheet, include_hidden, max_cells, anchor)
     end
   end
 
@@ -256,6 +267,17 @@ defmodule Spreadsheet do
       other ->
         raise ArgumentError,
               "expected :hidden to be a boolean, got: #{inspect(other)}"
+    end
+  end
+
+  defp anchor_option!(opts) do
+    case Keyword.get(opts, :anchor, :a1) do
+      anchor when anchor in [:a1, :data] ->
+        anchor
+
+      other ->
+        raise ArgumentError,
+              "expected :anchor to be :a1 or :data, got: #{inspect(other)}"
     end
   end
 

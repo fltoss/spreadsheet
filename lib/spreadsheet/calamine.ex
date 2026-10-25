@@ -37,7 +37,7 @@ defmodule Spreadsheet.Calamine do
     do: :erlang.nif_error(:nif_not_loaded)
 
   # `sheet` is a sheet name, or `nil` to parse every sheet. `max_cells` is a
-  # positive integer, or `nil` for no limit.
-  def parse(_source, _sheet, _include_hidden, _max_cells),
+  # positive integer, or `nil` for no limit. `anchor` is `:a1` or `:data`.
+  def parse(_source, _sheet, _include_hidden, _max_cells, _anchor),
     do: :erlang.nif_error(:nif_not_loaded)
 end

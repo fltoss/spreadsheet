@@ -5,6 +5,7 @@
 use crate::budget::Budget;
 use crate::error::Error;
 use crate::prescan;
+use crate::sheet::Anchor;
 use crate::workbook::{ReadSeek, Workbook};
 use calamine::{
     open_workbook_from_rs, Cell, Data, DataRef, Range, Reader, SheetType, Sheets, XlsxError,
@@ -48,9 +49,13 @@ pub enum SheetCells<'a> {
 pub struct SparseCells<'a> {
     /// In file order, which is normally but not necessarily row-major.
     pub cells: Vec<Cell<DataRef<'a>>>,
-    /// Rows from row 1 to the last cell.
+    /// The row and column the rows start at: 0 with `Anchor::A1`, the first
+    /// that hold a cell with `Anchor::Data`.
+    pub first_row: u32,
+    pub first_column: u32,
+    /// Rows from the first row to the last cell.
     pub rows: u64,
-    /// Columns from column A to the last cell.
+    /// Columns from the first column to the last cell.
     pub columns: u64,
     /// Whether `cells` is already in row-major order.
     pub sorted: bool,
@@ -147,6 +152,7 @@ pub fn read_cells<'a>(
     workbook: &'a mut Workbook,
     name: &str,
     budget: &Budget,
+    anchor: Anchor,
 ) -> Result<SheetCells<'a>, Error> {
     let sheet_type = workbook
         .sheets_metadata()
@@ -160,9 +166,13 @@ pub fn read_cells<'a>(
 
     match workbook {
         Sheets::Xlsx(xlsx) => match xlsx.worksheet_cells_reader(name) {
-            Ok(mut reader) => {
-                collect_cells(name, budget, || reader.next_cell(), calamine::Error::Xlsx)
-            }
+            Ok(mut reader) => collect_cells(
+                name,
+                budget,
+                anchor,
+                || reader.next_cell(),
+                calamine::Error::Xlsx,
+            ),
             // calamine treats other sheet kinds as empty too.
             Err(XlsxError::NotAWorksheet(_)) => Ok(SheetCells::Empty),
             Err(error) => Err(calamine::Error::Xlsx(error).into()),
@@ -171,7 +181,13 @@ pub fn read_cells<'a>(
             let mut reader = xlsb
                 .worksheet_cells_reader(name)
                 .map_err(calamine::Error::Xlsb)?;
-            collect_cells(name, budget, || reader.next_cell(), calamine::Error::Xlsb)
+            collect_cells(
+                name,
+                budget,
+                anchor,
+                || reader.next_cell(),
+                calamine::Error::Xlsb,
+            )
         }
         Sheets::Xls(xls) => Ok(SheetCells::Range(
             xls.worksheet_range(name).map_err(calamine::Error::Xls)?,
@@ -190,10 +206,18 @@ pub fn read_cells<'a>(
 fn collect_cells<'a, E>(
     name: &str,
     budget: &Budget,
+    anchor: Anchor,
     mut next_cell: impl FnMut() -> Result<Option<Cell<DataRef<'a>>>, E>,
     to_error: impl Fn(E) -> calamine::Error,
 ) -> Result<SheetCells<'a>, Error> {
     let mut cells = Vec::new();
+    // `None` until the first cell when the rows start at the data.
+    let mut origin = match anchor {
+        Anchor::A1 => Some((0, 0)),
+        Anchor::Data => None,
+    };
+    // One past the last row and column holding a cell.
+    let (mut end_row, mut end_column) = (0, 0);
     let (mut rows, mut columns) = (0, 0);
     let mut sorted = true;
     let mut previous = (0, 0);
@@ -202,10 +226,16 @@ fn collect_cells<'a, E>(
             continue;
         }
         let position = cell.get_position();
+        let (first_row, first_column) = origin.map_or(position, |(first_row, first_column)| {
+            (first_row.min(position.0), first_column.min(position.1))
+        });
         let (row, column) = (u64::from(position.0) + 1, u64::from(position.1) + 1);
-        if row > rows || column > columns {
-            rows = rows.max(row);
-            columns = columns.max(column);
+        if origin != Some((first_row, first_column)) || row > end_row || column > end_column {
+            origin = Some((first_row, first_column));
+            end_row = end_row.max(row);
+            end_column = end_column.max(column);
+            rows = end_row - u64::from(first_row);
+            columns = end_column - u64::from(first_column);
             budget.check_rectangle(name, rows, columns)?;
         }
         sorted &= position >= previous;
@@ -225,11 +255,13 @@ fn collect_cells<'a, E>(
         }
         budget.check_records(name, count)?;
     }
-    if cells.is_empty() {
+    let Some((first_row, first_column)) = origin.filter(|_| !cells.is_empty()) else {
         return Ok(SheetCells::Empty);
-    }
+    };
     Ok(SheetCells::Sparse(SparseCells {
         cells,
+        first_row,
+        first_column,
         rows,
         columns,
         sorted,
@@ -263,15 +295,72 @@ mod tests {
     }
 
     fn collect(positions: &[(u32, u32)], budget: &Budget) -> Result<SheetCells<'static>, Error> {
+        collect_from(positions, budget, Anchor::A1)
+    }
+
+    fn collect_from(
+        positions: &[(u32, u32)],
+        budget: &Budget,
+        anchor: Anchor,
+    ) -> Result<SheetCells<'static>, Error> {
         let mut cells = positions
             .iter()
             .map(|position| Cell::new(*position, DataRef::Float(1.0)));
         collect_cells(
             "S",
             budget,
+            anchor,
             || Ok::<_, Error>(cells.next()),
             |_| calamine::Error::Msg("unreachable"),
         )
+    }
+
+    #[test]
+    fn cells_collected_from_the_data_start_at_its_first_row_and_column() {
+        let unlimited = Budget::new(None);
+        // Unsorted, so the origin moves as cells arrive.
+        let Ok(SheetCells::Sparse(sparse)) =
+            collect_from(&[(4, 3), (2, 5), (3, 2)], &unlimited, Anchor::Data)
+        else {
+            panic!("expected cells");
+        };
+        assert_eq!(
+            (
+                sparse.first_row,
+                sparse.first_column,
+                sparse.rows,
+                sparse.columns
+            ),
+            (2, 2, 3, 4)
+        );
+
+        let Ok(SheetCells::Sparse(sparse)) =
+            collect_from(&[(4, 3), (2, 5)], &unlimited, Anchor::A1)
+        else {
+            panic!("expected cells");
+        };
+        assert_eq!(
+            (
+                sparse.first_row,
+                sparse.first_column,
+                sparse.rows,
+                sparse.columns
+            ),
+            (0, 0, 5, 6)
+        );
+        assert!(matches!(
+            collect_from(&[], &unlimited, Anchor::Data),
+            Ok(SheetCells::Empty)
+        ));
+    }
+
+    #[test]
+    fn the_budget_counts_from_the_data_when_rows_start_there() {
+        // C3:E6 is 4 × 3 cells; from A1 it is 6 × 5.
+        let positions = [(2, 2), (2, 3), (3, 2), (3, 3), (5, 4)];
+        let budget = Budget::new(Some(12));
+        assert!(collect_from(&positions, &budget, Anchor::Data).is_ok());
+        assert!(collect_from(&positions, &budget, Anchor::A1).is_err());
     }
 
     #[test]

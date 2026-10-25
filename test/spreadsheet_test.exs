@@ -170,6 +170,18 @@ defmodule SpreadsheetTest do
                    end
     end
 
+    test "an unknown :anchor raises", %{path: path} do
+      assert_raise ArgumentError,
+                   ~r/expected :anchor to be :a1 or :data, got: :b2/,
+                   fn ->
+                     Spreadsheet.parse(path, anchor: :b2)
+                   end
+    end
+
+    test "sheet_names/2 accepts and ignores :anchor", %{path: path} do
+      assert Spreadsheet.sheet_names(path, anchor: :data) == {:ok, ["Sheet1"]}
+    end
+
     test "sheet: nil parses every sheet", %{path: path} do
       assert {:ok, [{"Sheet1", _rows}]} = Spreadsheet.parse(path, sheet: nil)
     end
